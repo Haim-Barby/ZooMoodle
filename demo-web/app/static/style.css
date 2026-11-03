@@ -193,10 +193,45 @@ pre, .readout {
 canvas.wave { width: 100%; height: 88px; background: #10241c; border-radius: 12px; display: block; }
 .meter { height: 0.7rem; background: color-mix(in srgb, var(--line) 70%, transparent); border-radius: 99px; overflow: hidden; }
 .meter span { display: block; height: 100%; width: 0; background: var(--accent); }
-.zones { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
-.zones button { margin: 0; background: color-mix(in srgb, var(--accent) 12%, var(--bg-elev)); color: var(--ink); }
-.zones button.selected { background: var(--accent); color: var(--accent-ink); }
-.zone-map { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
+.zones, .seat-map { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.4rem; }
+.seat-map .board {
+  grid-column: 1 / -1;
+  margin: 0 0 0.1rem;
+  text-align: center;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 0.4rem 0.5rem;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev));
+}
+.zones button, .seat-map button {
+  width: 100%;
+  margin: 0;
+  padding: 0.55rem 0.25rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elev));
+  color: var(--ink);
+}
+.zones button.selected, .seat-map button.selected { background: var(--accent); color: var(--accent-ink); }
+.zone-map { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.45rem; }
+.counts { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.lesson-id { margin: 0.15rem 0 0; font-size: 0.82rem; color: var(--muted); }
+.question-list { display: grid; gap: 0.5rem; }
+.question-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.55rem 0.65rem;
+}
+.question-item p { margin: 0; }
+.question-item button { margin: 0; flex: none; }
 .zone-cell { border-radius: 12px; padding: 0.7rem; border: 1px solid var(--line); min-height: 4.2rem; }
 video.preview { width: 100%; max-height: 240px; border-radius: 12px; background: #000; }
 .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.7rem; }

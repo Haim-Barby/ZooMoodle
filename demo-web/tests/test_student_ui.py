@@ -17,7 +17,7 @@ def test_lecturer_and_student_pages_load():
     assert "/static/lecturer.js" in lecturer.text
     assert student.status_code == 200
     assert 'id="check-result"' in student.text
-    assert 'id="comment-result"' in student.text
+    assert 'id="question-result"' in student.text
     assert "/static/student.js" in student.text
     assert client.get("/static/lecturer.js").status_code == 200
     assert client.get("/static/student.js").status_code == 200
@@ -27,13 +27,13 @@ def test_lecturer_and_student_pages_load():
 def test_student_errors_are_sentences_and_statuses_are_separate():
     html = (ROOT / "app" / "static" / "student.html").read_text(encoding="utf-8")
     script = (ROOT / "app" / "static" / "student.js").read_text(encoding="utf-8")
-    assert html.index('id="check-result"') < html.index('id="comment-result"')
+    assert html.index('id="check-result"') < html.index('id="question-result"')
     assert "function explain(" in script
-    for code in ("unknown_room", "bad_token", "missing_comment", "already_answered"):
+    for code in ("unknown_room", "bad_token", "missing_question", "already_answered", "already_upvoted"):
         assert code + ":" in script
-    comment = script.split('"#send-comment"')[1].split('"#send-homework"')[0]
-    assert "setCommentResult(" in comment
-    assert "setResult(" not in comment
+    question = script.split('"#send-question"')[1].split("async function refreshLesson")[0]
+    assert "setQuestionResult(" in question
+    assert "setResult(" not in question
     checkin = script.split("async function checkIn")[1].split('"#typed"')[0]
     assert "explain(" in checkin
     assert "body.error ||" not in checkin
@@ -53,3 +53,24 @@ def test_student_id_is_optional_and_the_mic_stops_after_check_in():
     assert "onaudioprocess = null" in stop
     remote = script.split('"#remote"')[1].split('"#listen"')[0]
     assert "#mode-status" in remote and "#join-status" not in remote
+
+
+def test_check_in_uses_a_three_by_three_map_and_the_lesson_has_no_zone_picker():
+    html = (ROOT / "app" / "static" / "student.html").read_text(encoding="utf-8")
+    script = (ROOT / "app" / "static" / "student.js").read_text(encoding="utf-8")
+    assert "Lecturer / board" in html
+    assert 'id="lesson-zones"' not in html
+    assert 'id="count-in-class"' in html
+    assert 'id="count-remote"' in html
+    assert 'id="lesson-summary"' in html
+    assert 'id="lesson-title"' in html
+    for zone in ("front-center", "middle-center", "back-center"):
+        assert zone in script
+    assert "No polls yet" in html
+    assert "Summary not published yet" in script
+    assert "/counts" in script
+    assert "/questions" in script
+    assert "/summary" in script
+    assert "holder.appendChild" not in script
+    remote = script.split('"#remote"')[1].split('"#listen"')[0]
+    assert "seat" not in remote

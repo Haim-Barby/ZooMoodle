@@ -1,4 +1,8 @@
-const zones = ["front-left", "front-right", "middle-left", "middle-right", "back-left", "back-right"];
+const zones = [
+  "front-left", "front-center", "front-right",
+  "middle-left", "middle-center", "middle-right",
+  "back-left", "back-center", "back-right",
+];
 const zoneBox = document.querySelector("#zones");
 let seat = sessionStorage.getItem("zoomoodle-seat") || "";
 zones.forEach((zone) => {
@@ -6,11 +10,16 @@ zones.forEach((zone) => {
   button.type = "button";
   button.textContent = zone.replace("-", " ");
   button.dataset.zone = zone;
+  button.setAttribute("aria-pressed", zone === seat ? "true" : "false");
   if (zone === seat) button.classList.add("selected");
   button.addEventListener("click", () => {
     seat = zone;
     sessionStorage.setItem("zoomoodle-seat", seat);
-    zoneBox.querySelectorAll("button").forEach((item) => item.classList.toggle("selected", item.dataset.zone === seat));
+    zoneBox.querySelectorAll("button").forEach((item) => {
+      const on = item.dataset.zone === seat;
+      item.classList.toggle("selected", on);
+      item.setAttribute("aria-pressed", on ? "true" : "false");
+    });
   });
   zoneBox.appendChild(button);
 });
@@ -21,8 +30,8 @@ roomInput.value = params.get("room") || sessionStorage.getItem("zoomoodle-room")
 document.querySelector("#name").value = sessionStorage.getItem("zoomoodle-name") || "";
 document.querySelector("#sid").value = sessionStorage.getItem("zoomoodle-sid") || "";
 
-const listen = { context: null, processor: null, stream: null, chunks: [], checking: false, homeworkId: null, scanner: null };
-const flow = { step: "join", mode: "", attendanceId: "", band: "ultrasonic", proof: "both" };
+const listen = { context: null, processor: null, stream: null, chunks: [], checking: false, scanner: null };
+const flow = { step: "join", mode: "", attendanceId: "", band: "ultrasonic", proof: "both", title: "" };
 
 function showStep(name) {
   ["join", "mode", "class", "lesson"].forEach((step) => {
@@ -39,6 +48,7 @@ function saveFlow() {
     attendanceId: flow.attendanceId,
     band: flow.band,
     proof: flow.proof,
+    title: flow.title || "",
     room: roomInput.value.trim(),
   }));
 }
@@ -102,6 +112,9 @@ const ERROR_TEXT = {
   bad_option: "Pick one of the poll options.",
   already_answered: "You already answered this poll.",
   missing_comment: "Enter your student id and a comment first.",
+  missing_question: "Enter a question first.",
+  already_upvoted: "You already upvoted that question.",
+  unknown_question: "That question is no longer available.",
   missing_homework: "Enter your student id and paste an answer first.",
   unknown_submission: "That homework submission was not found.",
   expected_json: "The server could not read that request.",
@@ -121,10 +134,17 @@ function setResult(message, ok) {
   node.className = ok ? "ok" : "bad";
 }
 
-function setCommentResult(message, ok) {
-  const node = document.querySelector("#comment-result");
+function setQuestionResult(message, ok) {
+  const node = document.querySelector("#question-result");
   node.textContent = message;
   node.className = ok ? "ok" : "bad";
+}
+
+function lessonIdentity() {
+  return {
+    studentId: flow.attendanceId || "",
+    room: roomInput.value.trim(),
+  };
 }
 
 async function checkIn(mode, tokenCode) {
@@ -223,6 +243,7 @@ document.querySelector("#join-continue").addEventListener("click", async () => {
   note.textContent = "";
   flow.band = body.audio_band || "ultrasonic";
   flow.proof = body.proof || "both";
+  flow.title = body.title || flow.title || "";
   sessionStorage.setItem("zoomoodle-room", room);
   document.querySelector("#mode-room").textContent = "Room " + body.id + (body.title ? " · " + body.title : "");
   showStep("mode");
@@ -339,90 +360,209 @@ function stopListening() {
 
 document.querySelector("#stop").addEventListener("click", stopListening);
 
-async function loadPoll() {
-  const room = roomInput.value.trim();
-  if (!room) return;
-  const response = await fetch("/api/rooms/" + encodeURIComponent(room) + "/polls");
-  if (!response.ok) return;
-  const body = await response.json();
-  const polls = body.polls || [];
-  if (!polls.length) {
-    document.querySelector("#poll").textContent = "No poll yet.";
+function renderPoll(poll) {
+  const box = document.querySelector("#poll");
+  box.className = "";
+  box.innerHTML = "<p><strong>" + escapeHtml(poll.question) + "</strong></p>";
+  if (poll.voted_option) {
+    const counts = poll.counts || {};
+    poll.options.forEach((option) => {
+      const row = document.createElement("p");
+      row.className = "note";
+      const count = Object.prototype.hasOwnProperty.call(counts, option) ? counts[option] : 0;
+      row.textContent = option + " · " + count + (option === poll.voted_option ? " · your vote" : "");
+      box.appendChild(row);
+    });
     return;
   }
-  const poll = polls[polls.length - 1];
-  const box = document.querySelector("#poll");
-  box.innerHTML = "<p><strong>" + escapeHtml(poll.question) + "</strong></p>";
+  const who = lessonIdentity();
   poll.options.forEach((option) => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = option;
     button.addEventListener("click", async () => {
-      const who = identity();
+      const zone = flow.mode === "remote" ? "remote" : seat;
       const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/polls/" + poll.id + "/answers", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ student_id: who.studentId, option: option, seat_zone: seat }),
+        body: JSON.stringify({ student_id: who.studentId, option: option, seat_zone: zone }),
       });
-      const payload = await response.json();
-      const message = response.ok ? "Answer recorded." : explain(payload.error, "Could not record the answer.");
-      box.insertAdjacentHTML("beforeend", "<p class=\"" + (response.ok ? "note" : "bad") + "\">" + escapeHtml(message) + "</p>");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        box.insertAdjacentHTML("beforeend", "<p class=\"bad\">" + escapeHtml(explain(payload.error, "Could not record the answer.")) + "</p>");
+        return;
+      }
+      pollStamp = "";
+      renderPoll({
+        question: poll.question,
+        options: poll.options,
+        voted_option: payload.voted_option || option,
+        counts: payload.counts || {},
+      });
+      loadPoll().catch(() => {});
     });
     box.appendChild(button);
   });
 }
 
-document.querySelector("#send-comment").addEventListener("click", async () => {
-  const who = identity();
-  const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/comments", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      student_id: who.studentId,
-      student_name: who.studentName,
-      text: document.querySelector("#comment").value,
-    }),
-  });
-  const body = await response.json();
-  setCommentResult(response.ok ? "Comment sent." : explain(body.error, "Could not send the comment."), response.ok);
-});
+let pollStamp = "";
+let pollGeneration = 0;
 
-document.querySelector("#send-homework").addEventListener("click", async () => {
-  const who = identity();
-  const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/homework", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      student_id: who.studentId,
-      student_name: who.studentName,
-      text: document.querySelector("#homework").value,
-    }),
-  });
+async function loadPoll() {
+  const generation = ++pollGeneration;
+  const who = lessonIdentity();
+  if (!who.room) return;
+  const query = who.studentId ? "?student_id=" + encodeURIComponent(who.studentId) : "";
+  const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/polls" + query);
+  if (generation !== pollGeneration || !response.ok) return;
   const body = await response.json();
+  if (generation !== pollGeneration) return;
+  const polls = body.polls || [];
+  const box = document.querySelector("#poll");
+  if (!polls.length) {
+    if (pollStamp === who.room + ":empty") return;
+    pollStamp = who.room + ":empty";
+    box.className = "note";
+    box.textContent = "No polls yet";
+    return;
+  }
+  const poll = polls[polls.length - 1];
+  const stamp = who.room + ":" + JSON.stringify(poll);
+  if (stamp === pollStamp) return;
+  pollStamp = stamp;
+  renderPoll(poll);
+}
+
+let questionStamp = "";
+let questionGeneration = 0;
+
+async function loadQuestions() {
+  const generation = ++questionGeneration;
+  const who = lessonIdentity();
+  if (!who.room) return;
+  const query = who.studentId ? "?student_id=" + encodeURIComponent(who.studentId) : "";
+  const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/questions" + query);
+  if (generation !== questionGeneration || !response.ok) return;
+  const body = await response.json();
+  if (generation !== questionGeneration) return;
+  const box = document.querySelector("#questions");
+  const questions = body.questions || [];
+  const stamp = who.room + ":" + JSON.stringify(questions);
+  if (stamp === questionStamp) return;
+  questionStamp = stamp;
+  if (!questions.length) {
+    box.className = "note";
+    box.textContent = "No questions yet.";
+    return;
+  }
+  box.className = "question-list";
+  box.innerHTML = "";
+  questions.forEach((question) => {
+    const item = document.createElement("article");
+    item.className = "question-item";
+    const text = document.createElement("p");
+    text.textContent = question.text;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.textContent = (question.upvoted ? "Upvoted" : "Upvote") + " · " + question.votes;
+    button.disabled = !!question.upvoted;
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      const vote = await fetch(
+        "/api/rooms/" + encodeURIComponent(who.room) + "/questions/" + encodeURIComponent(question.id) + "/upvote",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ student_id: who.studentId }),
+        }
+      );
+      const payload = await vote.json().catch(() => ({}));
+      if (!vote.ok) {
+        button.disabled = false;
+        setQuestionResult(explain(payload.error, "Could not upvote that question."), false);
+        return;
+      }
+      setQuestionResult("", true);
+      loadQuestions().catch(() => {});
+    });
+    item.appendChild(text);
+    item.appendChild(button);
+    box.appendChild(item);
+  });
+}
+
+document.querySelector("#send-question").addEventListener("click", async () => {
+  const who = lessonIdentity();
+  const text = document.querySelector("#question").value.trim();
+  if (!who.room || !who.studentId) {
+    setQuestionResult("Reload the lesson. The server id is missing.", false);
+    return;
+  }
+  if (!text) {
+    setQuestionResult(explain("missing_question"), false);
+    return;
+  }
+  setQuestionResult("Sending…", true);
+  let response;
+  try {
+    response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/questions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ student_id: who.studentId, text: text }),
+    });
+  } catch (_err) {
+    setQuestionResult("Could not reach the server. Check the connection and try again.", false);
+    return;
+  }
+  const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    document.querySelector("#review").textContent = explain(body.error, "Submit failed.");
+    setQuestionResult(explain(body.error, "Could not send the question."), false);
     return;
   }
-  listen.homeworkId = body.id;
-  document.querySelector("#review").textContent = "Submitted as " + body.id + ".";
+  document.querySelector("#question").value = "";
+  setQuestionResult("Question sent.", true);
+  loadQuestions().catch(() => {});
 });
 
-document.querySelector("#review-homework").addEventListener("click", async () => {
-  const who = identity();
-  const out = document.querySelector("#review");
-  if (!listen.homeworkId) {
-    out.textContent = "Submit the homework first.";
-    return;
+let lessonRefresh = false;
+
+async function refreshLesson() {
+  if (flow.step !== "lesson" || lessonRefresh) return;
+  lessonRefresh = true;
+  try {
+  await refreshLessonBody();
+  } finally {
+    lessonRefresh = false;
   }
-  out.textContent = "Asking the agent…";
-  const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/agent/homework", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ submission_id: listen.homeworkId, audience: "student" }),
-  });
-  const body = await response.json();
-  out.textContent = response.ok ? JSON.stringify(body, null, 2) : explain(body.error, "Review failed.");
-});
+}
+
+async function refreshLessonBody() {
+  const who = lessonIdentity();
+  if (!who.room) return;
+  const counts = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/counts");
+  if (counts.ok) {
+    const body = await counts.json();
+    if (body.title && body.title !== flow.title) {
+      flow.title = body.title;
+      document.querySelector("#lesson-title").textContent = body.title;
+      saveFlow();
+    }
+    document.querySelector("#count-in-class").textContent = String(body.in_class);
+    document.querySelector("#count-remote").textContent = String(body.remote);
+    const summary = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/summary");
+    const summaryBody = summary.ok ? await summary.json().catch(() => ({})) : {};
+    const card = document.querySelector("#summary-card");
+    const closed = !!(body.closed || summaryBody.closed);
+    card.hidden = !closed;
+    if (closed) {
+      const node = document.querySelector("#lesson-summary");
+      node.textContent = summaryBody.text ? summaryBody.text : "Summary not published yet";
+    }
+  }
+  await loadPoll();
+  await loadQuestions();
+}
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ({
@@ -430,18 +570,16 @@ function escapeHtml(value) {
   }[ch]));
 }
 
-function enterLesson(mode, attendanceId) {
+function enterLesson(mode, attendanceId, title) {
   flow.mode = mode;
   flow.attendanceId = attendanceId || "";
+  if (title) flow.title = title;
+  document.querySelector("#lesson-title").textContent = flow.title || "Lesson";
+  document.querySelector("#lesson-mode").textContent = mode === "remote" ? "Remote" : "In class";
   document.querySelector("#attendance-id").textContent = flow.attendanceId || "—";
-  document.querySelector("#lesson-status").textContent = mode === "remote"
-    ? "You are remote. This marker means you are not checked in as being in class."
-    : "You are in class. The attendance id below came from the server.";
-  const zonesNode = document.querySelector("#zones");
-  const holder = document.querySelector("#lesson-zones");
-  if (zonesNode && holder && zonesNode.parentElement !== holder) holder.appendChild(zonesNode);
   showStep("lesson");
   saveFlow();
+  refreshLesson().catch(() => {});
 }
 
 document.querySelector("#scan").addEventListener("click", async () => {
@@ -483,9 +621,9 @@ document.querySelector("#scan").addEventListener("click", async () => {
   if (saved.room) roomInput.value = saved.room;
   flow.band = saved.band || flow.band;
   flow.proof = saved.proof || flow.proof;
-  if (saved.step === "lesson" && saved.attendanceId) enterLesson(saved.mode || "in_class", saved.attendanceId);
+  flow.title = saved.title || "";
+  if (saved.step === "lesson" && saved.attendanceId) enterLesson(saved.mode || "in_class", saved.attendanceId, flow.title);
   else if (saved.step === "class" || saved.step === "mode") showStep(saved.step);
 }());
 
-loadPoll();
-setInterval(() => loadPoll().catch(() => {}), 4000);
+setInterval(() => refreshLesson().catch(() => {}), 3000);

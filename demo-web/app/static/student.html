@@ -41,8 +41,10 @@
       <input id="name" autocomplete="name">
       <label for="sid">Student id (optional)</label>
       <input id="sid" autocomplete="off" placeholder="Leave empty, the server issues one">
-      <p class="note">Pick a seat, then listen or enter the code on the lecturer's screen. The browser will ask for the microphone. High-frequency filters stay off.</p>
-      <div id="zones" class="zones"></div>
+      <p class="note">Pick a seat on the map. The board is the front of the room. Then listen or enter the code on the lecturer's screen. The browser will ask for the microphone. High-frequency filters stay off.</p>
+      <div id="zones" class="seat-map" role="group" aria-label="Seat in the room">
+        <p class="board">Lecturer / board</p>
+      </div>
       <div class="meter" aria-hidden="true"><span id="level"></span></div>
       <p id="level-text" class="note">Microphone is off.</p>
       <p id="tone-diagnostics" class="note"></p>
@@ -58,30 +60,38 @@
 
     <section id="step-lesson" hidden>
       <section class="card">
-        <h2>Lesson</h2>
-        <p id="lesson-status" class="note"></p>
-        <p>Attendance id <strong id="attendance-id" class="mono">—</strong></p>
-        <p class="note">That id was issued by the server. This phone does not invent it.</p>
-        <h2>Seat</h2>
-        <div id="lesson-zones"></div>
+        <h2 id="lesson-title">Lesson</h2>
+        <p class="lesson-id"><span id="lesson-mode">In class</span> · <span id="attendance-id" class="mono">—</span></p>
+      </section>
+      <section class="card">
+        <h2>In the room</h2>
+        <div class="counts">
+          <div>
+            <p class="stat" id="count-in-class">0</p>
+            <p class="note">In class</p>
+          </div>
+          <div>
+            <p class="stat" id="count-remote">0</p>
+            <p class="note">Remote</p>
+          </div>
+        </div>
       </section>
       <section class="card">
         <h2>Poll</h2>
-        <div id="poll" class="note">No poll yet.</div>
+        <div id="poll" class="note">No polls yet</div>
       </section>
       <section class="card">
-        <h2>Comment</h2>
-        <textarea id="comment" placeholder="A question or suggestion"></textarea>
-        <button id="send-comment" type="button">Send</button>
-        <p id="comment-result" class="note" role="status"></p>
+        <h2>Questions</h2>
+        <p class="note">Ask the lecturer without interrupting. Everyone in the room can read these. Names are not shown.</p>
+        <div id="questions" class="question-list note">No questions yet.</div>
+        <label for="question">Your question</label>
+        <textarea id="question" placeholder="A question for the lecturer"></textarea>
+        <button id="send-question" type="button">Send</button>
+        <p id="question-result" class="note" role="status"></p>
       </section>
-      <section class="card">
-        <h2>Homework</h2>
-        <p class="note">A review is not a grade. Peers are compared by anonymous id.</p>
-        <textarea id="homework" placeholder="Paste your answer"></textarea>
-        <button id="send-homework" type="button">Submit</button>
-        <button id="review-homework" class="secondary" type="button">Ask for a review</button>
-        <pre id="review">No review yet.</pre>
+      <section class="card" id="summary-card" hidden>
+        <h2>Lesson summary</h2>
+        <div id="lesson-summary" class="readout">Summary not published yet</div>
       </section>
     </section>
   </main>

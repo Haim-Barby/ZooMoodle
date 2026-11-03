@@ -24,6 +24,15 @@ def test_public_room_payload_is_what_the_lecturer_page_restores():
     assert missing.json()["error"] == "unknown_room"
 
 
+def test_unlock_loads_saved_model_settings_without_a_reload():
+    script = (ROOT / "app" / "static" / "lecturer.js").read_text(encoding="utf-8")
+    handler = script.split('"#save-token"')[1].split("const ROOM_KEY")[0]
+    assert "await loadLlm()" in handler
+    assert 'document.querySelector("#provider").value = config.provider' in script
+    assert 'document.querySelector("#model").value = config.model' in script
+    assert 'document.querySelector("#base-url").value = config.base_url' in script
+
+
 def test_lecturer_script_restores_the_saved_room_or_drops_it():
     script = (ROOT / "app" / "static" / "lecturer.js").read_text(encoding="utf-8")
     assert 'const ROOM_KEY = "zoomoodle-lecturer-room"' in script

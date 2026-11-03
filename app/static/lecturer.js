@@ -31,9 +31,12 @@ async function api(path, options = {}) {
   return body;
 }
 
-document.querySelector("#save-token").addEventListener("click", () => {
+document.querySelector("#save-token").addEventListener("click", async () => {
   sessionStorage.setItem("zoomoodle-lecturer-token", tokenInput.value.trim());
-  document.querySelector("#token-state").textContent = "Saved in this browser tab's session only.";
+  const unlocked = await loadLlm();
+  document.querySelector("#token-state").textContent = unlocked
+    ? "Saved in this browser tab's session only."
+    : "Enter the lecturer token to load model settings.";
 });
 
 const ROOM_KEY = "zoomoodle-lecturer-room";
@@ -344,8 +347,12 @@ async function loadLlm() {
     if (config.base_url) document.querySelector("#base-url").value = config.base_url;
     document.querySelector("#llm-state").textContent =
       "Key stored: " + (config.key_configured ? "yes" : "no") + ". Ready: " + config.ready + ".";
+    return true;
   } catch (_err) {
+    state.llmConfigLoaded = false;
+    state.llmKeyConfigured = false;
     document.querySelector("#llm-state").textContent = "Enter the lecturer token to load model settings.";
+    return false;
   }
 }
 

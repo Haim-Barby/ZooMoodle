@@ -65,8 +65,43 @@ async function sign(record, challengeId, nonce) {
   return btoa(text);
 }
 
+const ERROR_TEXT = {
+  unknown_room: "That room is not on this server.",
+  missing_identity: "Enter your student id first.",
+  device_mismatch: "This device does not match the one that opened the challenge.",
+  challenge_used: "That challenge was already used. Try again.",
+  challenge_expired: "That challenge expired. Try again.",
+  bad_mode: "The check-in mode was not accepted.",
+  bad_zone: "Pick a seat zone first.",
+  bad_signature: "The device signature was rejected.",
+  missing_code: "Enter the on-screen code.",
+  bad_token: "That code is not valid right now.",
+  reused_token: "This device already used that code.",
+  unknown_poll: "That poll is no longer available.",
+  bad_option: "Pick one of the poll options.",
+  already_answered: "You already answered this poll.",
+  missing_comment: "Enter your student id and a comment first.",
+  missing_homework: "Enter your student id and paste an answer first.",
+  unknown_submission: "That homework submission was not found.",
+  expected_json: "The server could not read that request.",
+};
+
+function explain(error, fallback) {
+  if (!error) return fallback;
+  const text = String(error);
+  if (Object.prototype.hasOwnProperty.call(ERROR_TEXT, text)) return ERROR_TEXT[text];
+  if (text.indexOf(" ") !== -1) return text;
+  return fallback;
+}
+
 function setResult(message, ok) {
   const node = document.querySelector("#check-result");
+  node.textContent = message;
+  node.className = ok ? "ok" : "bad";
+}
+
+function setCommentResult(message, ok) {
+  const node = document.querySelector("#comment-result");
   node.textContent = message;
   node.className = ok ? "ok" : "bad";
 }
@@ -95,7 +130,7 @@ async function checkIn(mode, tokenCode) {
   });
   const opened = await challenge.json();
   if (!challenge.ok) {
-    setResult(opened.error || "Could not open a challenge.", false);
+    setResult(explain(opened.error, "Could not open a challenge."), false);
     return;
   }
   const signature = await sign(keys, opened.challenge_id, opened.nonce);
@@ -113,7 +148,7 @@ async function checkIn(mode, tokenCode) {
   });
   const body = await response.json();
   if (!response.ok) {
-    setResult(body.error || "Check-in was rejected.", false);
+    setResult(explain(body.error, "Check-in was rejected."), false);
     return;
   }
   const extra = body.external_token ? " Remote token: " + body.external_token : "";
@@ -211,7 +246,8 @@ async function loadPoll() {
         body: JSON.stringify({ student_id: who.studentId, option: option, seat_zone: seat }),
       });
       const payload = await response.json();
-      box.insertAdjacentHTML("beforeend", "<p class=\"note\">" + escapeHtml(payload.error || "Answer recorded.") + "</p>");
+      const message = response.ok ? "Answer recorded." : explain(payload.error, "Could not record the answer.");
+      box.insertAdjacentHTML("beforeend", "<p class=\"" + (response.ok ? "note" : "bad") + "\">" + escapeHtml(message) + "</p>");
     });
     box.appendChild(button);
   });
@@ -229,7 +265,7 @@ document.querySelector("#send-comment").addEventListener("click", async () => {
     }),
   });
   const body = await response.json();
-  setResult(body.error || "Comment sent.", response.ok);
+  setCommentResult(response.ok ? "Comment sent." : explain(body.error, "Could not send the comment."), response.ok);
 });
 
 document.querySelector("#send-homework").addEventListener("click", async () => {
@@ -245,7 +281,7 @@ document.querySelector("#send-homework").addEventListener("click", async () => {
   });
   const body = await response.json();
   if (!response.ok) {
-    document.querySelector("#review").textContent = body.error || "Submit failed.";
+    document.querySelector("#review").textContent = explain(body.error, "Submit failed.");
     return;
   }
   listen.homeworkId = body.id;
@@ -266,7 +302,7 @@ document.querySelector("#review-homework").addEventListener("click", async () =>
     body: JSON.stringify({ submission_id: listen.homeworkId, audience: "student" }),
   });
   const body = await response.json();
-  out.textContent = response.ok ? JSON.stringify(body, null, 2) : (body.error || "Review failed.");
+  out.textContent = response.ok ? JSON.stringify(body, null, 2) : explain(body.error, "Review failed.");
 });
 
 function escapeHtml(value) {

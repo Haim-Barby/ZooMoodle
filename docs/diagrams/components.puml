@@ -1,0 +1,52 @@
+@startuml components
+title ZooMoodle components
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Student phone (browser)" {
+  [Student page] as StudentUI
+  [FSK decoder] as Decoder
+  [Device key in localStorage] as DeviceKey
+}
+
+package "Lecturer laptop (browser)" {
+  [Lecturer page] as LecturerUI
+  [FSK player] as Player
+}
+
+package "ZooMoodle server" {
+  [HTTP API] as API
+  [Room store] as Store
+  [KeyManager] as Keys
+  [TokenService] as Tokens
+  [AttendanceService] as Attendance
+  [DeviceBinding] as Binding
+  [AnomalyDetector] as Anomalies
+  [ExportService] as Export
+  [LessonAgent] as Agent
+  [Tool registry] as Tools
+  [LLMClient] as Client
+  [AttentionAggregator] as Attention
+}
+
+cloud "LLM provider\n(OpenAI, Anthropic, Gemini,\nxAI, Ollama, compatible)" as Provider
+
+StudentUI --> API : check-in, poll, comment, homework
+LecturerUI --> API : room, token, export, agent, LLM test
+Decoder --> StudentUI
+Player --> LecturerUI
+DeviceKey --> StudentUI
+API --> Store
+Store --> Keys
+Store --> Tokens
+Store --> Attendance
+Attendance --> Binding
+Attendance --> Anomalies
+API --> Export
+API --> Agent
+Agent --> Tools
+Agent --> Client
+Tools --> Attention
+Client --> Provider : tool-calling HTTPS\nkey in a header only
+@enduml

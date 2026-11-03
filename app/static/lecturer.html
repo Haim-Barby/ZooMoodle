@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZooMoodle lecturer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>ZooMoodle</h1>
+    <p>Lecturer desk. The phone page is for students. The API key stays on this server.</p>
+  </header>
+  <main>
+    <section>
+      <h2>Unlock</h2>
+      <p class="note">The lecturer token is printed at startup when it is not set in the environment. It is not the model key.</p>
+      <label for="token">Lecturer token</label>
+      <input id="token" type="password" autocomplete="off">
+      <button id="save-token" type="button">Save on this browser</button>
+      <p id="token-state" class="note"></p>
+    </section>
+
+    <section>
+      <h2>Room</h2>
+      <label for="title">Lesson title</label>
+      <input id="title" value="Lesson">
+      <button id="open-room" type="button">Open room</button>
+      <p id="room-info" class="note"></p>
+    </section>
+
+    <section>
+      <h2>Attendance beacon</h2>
+      <p class="note">Play this on the laptop speakers, not headphones. The tone is near 18–19 kHz. The on-screen code is the fallback.</p>
+      <div id="beacon-code" class="code">—</div>
+      <p id="beacon-meta" class="note"></p>
+      <button id="play" type="button" disabled>Play ultrasonic beacon</button>
+      <button id="stop" class="secondary" type="button" disabled>Stop</button>
+    </section>
+
+    <section>
+      <h2>Attendance</h2>
+      <div class="row">
+        <button id="refresh" class="secondary" type="button">Refresh</button>
+        <button id="csv" class="secondary" type="button">Download CSV</button>
+        <button id="xlsx" class="secondary" type="button">Download XLSX</button>
+      </div>
+      <div id="sheet"></div>
+    </section>
+
+    <section>
+      <h2>Poll</h2>
+      <label for="question">Question</label>
+      <input id="question" placeholder="What does HMAC prove?">
+      <label for="options">Options, one per line</label>
+      <textarea id="options">Integrity
+Confidentiality</textarea>
+      <label for="correct">Correct option (optional, exact text)</label>
+      <input id="correct">
+      <button id="add-poll" type="button">Ask the room</button>
+      <div id="polls"></div>
+    </section>
+
+    <section>
+      <h2>Comments</h2>
+      <div id="comments" class="note">None yet.</div>
+    </section>
+
+    <section>
+      <h2>Lesson agent</h2>
+      <p class="note">Imports a transcript file and asks the agent to relate topics, poll mistakes, and zone attention. Without a key, nothing is sent to a model.</p>
+      <input id="transcript" type="file" accept=".txt,.vtt,.srt,.md,text/plain">
+      <button id="summarize" type="button">Run lesson summary</button>
+      <pre id="summary">No summary yet.</pre>
+    </section>
+
+    <section>
+      <h2>Attention samples</h2>
+      <p class="note">Stub. This button stores labeled sample numbers. It does not open a camera, recognize faces, or grade anyone.</p>
+      <button id="sample-attention" class="secondary" type="button">Load sample-not-camera aggregates</button>
+      <pre id="attention">No samples.</pre>
+    </section>
+
+    <section>
+      <h2>Homework reviews</h2>
+      <div id="homework" class="note">No submissions.</div>
+    </section>
+
+    <section>
+      <h2>Model connection</h2>
+      <label for="provider">Provider</label>
+      <select id="provider">
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="gemini">Google Gemini</option>
+        <option value="xai">xAI</option>
+        <option value="ollama">Ollama (OpenAI-compatible)</option>
+        <option value="openai_compatible">Other OpenAI-compatible endpoint</option>
+      </select>
+      <label for="model">Model</label>
+      <input id="model" placeholder="gpt-4o-mini">
+      <label for="base-url">Base URL (blank uses the provider default)</label>
+      <input id="base-url" placeholder="https://api.openai.com/v1">
+      <label for="api-key">API key (kept in server memory, never shown again)</label>
+      <input id="api-key" type="password" autocomplete="off">
+      <div class="row">
+        <button id="save-llm" type="button">Save settings</button>
+        <button id="test-llm" class="secondary" type="button">Test connection</button>
+      </div>
+      <p id="llm-state" class="note"></p>
+    </section>
+  </main>
+  <script src="/static/fsk.js"></script>
+  <script src="/static/lecturer.js"></script>
+</body>
+</html>

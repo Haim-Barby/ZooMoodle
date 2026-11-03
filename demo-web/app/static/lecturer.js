@@ -255,6 +255,7 @@ async function refreshOverview() {
     document.querySelector("#rotating-qr").hidden = body.proof === "sound";
   }
   updateBandNote();
+  renderClassMap(body.zones || {});
   if (body.token) {
     document.querySelector("#beacon-code").textContent = body.token.code;
     document.querySelector("#beacon-meta").textContent =
@@ -458,6 +459,30 @@ document.querySelector("#test-tone").addEventListener("click", async () => {
   }, 450);
 });
 
+function renderClassMap(zones) {
+  const map = document.querySelector("#class-map");
+  if (!map) return;
+  const order = [
+    "front-left", "front-center", "front-right",
+    "middle-left", "middle-center", "middle-right",
+    "back-left", "back-center", "back-right",
+  ];
+  map.querySelectorAll(".zone-cell").forEach((cell) => cell.remove());
+  order.forEach((zone) => {
+    const count = zones && zones[zone] ? zones[zone] : 0;
+    const cell = document.createElement("div");
+    cell.className = "zone-cell";
+    const countNode = document.createElement("strong");
+    countNode.textContent = String(count);
+    const label = document.createElement("div");
+    label.className = "note";
+    label.textContent = zone.replace("-", " ");
+    cell.appendChild(countNode);
+    cell.appendChild(label);
+    map.appendChild(cell);
+  });
+}
+
 function renderSheet(records) {
   if (!records.length) {
     document.querySelector("#sheet").innerHTML = "<p class=\"note\">Nobody has checked in.</p>";
@@ -467,13 +492,14 @@ function renderSheet(records) {
     const flags = record.flags && record.flags.length ? record.flags.join(", ") : "";
     const kind = record.mode === "remote" ? "Remote" : "In class";
     const issued = record.attendance_id || record.external_token || "";
+    const verified = record.verified ? "Verified" : "Not verified";
     return "<tr><td>" + escapeHtml(record.name || "") + "</td><td>" + escapeHtml(record.student_id) +
       "</td><td class=\"mono\">" + escapeHtml(issued) + "</td><td>" + kind + "</td><td>" + escapeHtml(record.seat_zone) +
-      "</td><td>" + escapeHtml(record.confidence) +
+      "</td><td>" + escapeHtml(verified) + "</td><td>" + escapeHtml(record.confidence) +
       "</td><td class=\"flag\">" + escapeHtml(flags) + "</td><td>" + escapeHtml(record.subnet) + "</td></tr>";
   }).join("");
   document.querySelector("#sheet").innerHTML =
-    "<table><thead><tr><th>Name</th><th>Id</th><th>Attendance id</th><th>Mode</th><th>Zone</th><th>Confidence</th><th>Flags</th><th>Subnet</th></tr></thead><tbody>" +
+    "<table><thead><tr><th>Name</th><th>Id</th><th>Attendance id</th><th>Mode</th><th>Zone</th><th>Session</th><th>Confidence</th><th>Flags</th><th>Subnet</th></tr></thead><tbody>" +
     rows + "</tbody></table>";
 }
 

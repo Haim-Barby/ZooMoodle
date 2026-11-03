@@ -91,13 +91,23 @@ def test_attendance_note_names_the_room_band_and_open_rooms_can_be_reopened():
 def test_lecturer_reads_questions_by_votes_and_can_publish_a_summary():
     html = (ROOT / "app" / "static" / "lecturer.html").read_text(encoding="utf-8")
     script = (ROOT / "app" / "static" / "lecturer.js").read_text(encoding="utf-8")
-    assert 'data-tab="questions"' in html
+    assert 'id="class-map"' in html
+    assert "Lecturer / board" in html
+    assert "open the join page" in html
     assert 'id="question-list"' in html
     assert 'id="summary-draft"' in html
     assert 'id="publish-summary"' in html
     assert "Students are not named" in html
+    overview = html.split('data-panel="overview"')[1].split('data-panel="attendance"')[0]
+    assert 'id="class-map"' in overview
+    assert 'id="question-list"' in overview
+    assert 'id="polls"' in overview
+    assert 'id="summary-draft"' in overview
     questions = script.split('"#question-list"')[1].split('"#polls"')[0]
     assert "item.votes" in questions
     assert "student_id" not in questions
+    assert "function renderClassMap" in script
+    assert "Verified" in script
     assert "/summary/publish" in script
     assert "front-center" in script
+    assert "ZooQR.toSvg(link" in script

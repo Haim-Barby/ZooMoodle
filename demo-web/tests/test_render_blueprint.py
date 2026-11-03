@@ -8,6 +8,7 @@ def test_render_blueprint_is_a_free_python_web_service():
     assert "name: zoomoodle" in text
     assert "runtime: python" in text
     assert "plan: free" in text
+    assert "rootDir: demo-web" in text
     assert "buildCommand: pip install -r requirements.txt" in text
     assert 'startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1' in text
     assert "healthCheckPath: /api/health" in text

@@ -1,13 +1,15 @@
 # Deploy the demo on Render
 
-This is a free [Render](https://render.com) Web Service for one classroom demo. It uses the Blueprint in `render.yaml`. There is no database, disk, or paid add-on. Python is pinned to 3.12.8 (`PYTHON_VERSION` and `.python-version`), the same 3.12 line the app is written for.
+This is a free [Render](https://render.com) Web Service for one classroom demo. The Blueprint is `demo-web/render.yaml` and the service `rootDir` is `demo-web`. There is no database, disk, or paid add-on. Python is pinned to 3.12.8 (`PYTHON_VERSION` and `.python-version` inside `demo-web/`), the same 3.12 line the app is written for.
+
+The live service was created with an empty root directory. Set **Root Directory** to `demo-web` in the Render dashboard (Settings) before the next deploy can build. Until that is set, an auto-deploy from `main` fails and Render keeps the previous live version.
 
 ## One-click Blueprint
 
 1. Sign in to the Render Dashboard. The first time, authorize Render's GitHub app for `Haim-Barby/ZooMoodle`.
 2. Choose **New** → **Blueprint**.
-3. Select this repository. Render reads `render.yaml` from `main`.
-4. Apply the Blueprint. The service name is `zoomoodle`. It builds with `pip install -r requirements.txt` and starts one uvicorn worker on `$PORT`.
+3. Select this repository. Render reads `demo-web/render.yaml` from `main`. The blueprint sets the root directory to `demo-web`.
+4. Apply the Blueprint. The service name is `zoomoodle`. It builds with `pip install -r requirements.txt` inside `demo-web/` and starts one uvicorn worker on `$PORT`.
 5. Wait until the deploy is live. Open `https://<service>.onrender.com/api/health`. A healthy process returns `200` and `{"status":"ok",...}` with no secret in the body.
 
 `autoDeploy` follows `main`. A push to `main` redeploys. The public URL is Render's `RENDER_EXTERNAL_URL` (usually `https://zoomoodle.onrender.com`, or that name plus a suffix if it is taken). Student join links use that https origin.

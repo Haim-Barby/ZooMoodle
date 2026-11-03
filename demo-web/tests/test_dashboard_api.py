@@ -72,11 +72,11 @@ def test_diagram_catalog_lists_every_svg_without_rewriting_it():
     assert listed.status_code == 200
     diagrams = listed.json()["diagrams"]
     files = {item["file"] for item in diagrams}
-    on_disk = {path.name for path in (ROOT / "docs" / "diagrams").glob("*.svg")}
+    on_disk = {path.name for path in (ROOT.parent / "docs" / "diagrams").glob("*.svg")}
     assert files == on_disk
     assert "classes.svg" in files
     sample = client.get("/diagrams/classes.svg")
     assert sample.status_code == 200
     assert sample.content.startswith(b"<svg") or b"<svg" in sample.content[:200]
-    original = (ROOT / "docs" / "diagrams" / "classes.svg").read_bytes()
+    original = (ROOT.parent / "docs" / "diagrams" / "classes.svg").read_bytes()
     assert sample.content == original

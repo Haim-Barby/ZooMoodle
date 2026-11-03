@@ -5,6 +5,7 @@ services:
     name: zoomoodle
     runtime: python
     plan: free
+    rootDir: demo-web
     branch: main
     autoDeploy: true
     autoDeployTrigger: commit

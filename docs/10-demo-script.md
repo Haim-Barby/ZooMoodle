@@ -4,7 +4,7 @@ This is a script and a checklist for the owner. It is not a record of a demo. No
 
 Beforehand, on the laptop:
 
-1. Create a venv, install `requirements.txt`, and copy `.env.example` to `.env`.
+1. In `demo-web/`, create a venv, install `requirements.txt`, and copy `.env.example` to `.env`.
 2. Set `ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_TOKEN`. The copied `.env` already allows Ariel public ranges `192.114.48.0/21` and `192.114.56.0/23` (RIPE netname Ariel-segments, measured 2026-11-03 from egress 192.114.52.1). That registration also covers dorms and the campus VPN, so a subnet match only supports the ultrasonic token. Local `10.6.0.0/20` is not usable through NAT or cloudflared. Forwarded client IPs count only from `ZOOMODLE_TRUSTED_PROXIES` (default loopback).
 3. Leave the LLM key empty until the connection-test minute, or put it only in the lecturer page.
 4. Start Uvicorn. In another terminal start cloudflared (or another tunnel) to `http://127.0.0.1:8000`.

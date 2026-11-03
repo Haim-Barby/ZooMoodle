@@ -31,7 +31,7 @@ from app.net import client_ip, subnet_status
 from app.store import Store, StoreError
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-DIAGRAM_DIR = Path(__file__).resolve().parents[1] / "docs" / "diagrams"
+DIAGRAM_DIR = Path(__file__).resolve().parents[2] / "docs" / "diagrams"
 AUDIO_BANDS = ("ultrasonic", "near", "audible")
 PROOF_METHODS = ("sound", "qr", "both")
 DIAGRAM_TITLES = {

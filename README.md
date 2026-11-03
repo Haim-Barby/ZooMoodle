@@ -45,7 +45,7 @@ Status distinguishes a written artifact from completed validation.
 | 6. Components | [Components and interfaces](docs/06-components.md) | Written |
 | 7. Design | [Class and sequence diagrams](docs/07-design.md) | Present; class detail can be refined |
 | 8. Test strategy | [Tests and traceability](docs/08-testing-strategy.md) | Written; coverage gaps identified |
-| 9. Demo app | `app/`, `tests/`, `requirements.txt` | Implemented; known issues remain, see [conclusions](docs/11-conclusions.md) |
+| 9. Demo app | `demo-web/` (`app/`, `tests/`, `requirements.txt`) | Implemented; known issues remain, see [conclusions](docs/11-conclusions.md) |
 | 10. Classroom demo | [Ten-minute script](docs/10-demo-script.md) | Not performed |
 | 11. Conclusions | [Results and remaining work](docs/11-conclusions.md) | Draft; classroom results pending |
 
@@ -55,7 +55,10 @@ The [agent specification](docs/09-ai-agent.md) supports the design; it is not a 
 
 Use Python 3.12 and a virtual environment:
 
+The demo web app lives in `demo-web/`. From that directory:
+
 ```bash
+cd demo-web
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -81,6 +84,7 @@ Open the lecturer page through the printed HTTPS URL so its generated student li
 Tests:
 
 ```bash
+cd demo-web
 pytest
 ```
 
@@ -88,4 +92,4 @@ For AI, enter provider, model, and key, press **Save settings**, then **Test con
 
 ## Deploy on Render
 
-A free Web Service Blueprint is in `render.yaml`. Steps, the lecturer token, spin-down, and the in-memory store are in [Deploy on Render](docs/deploy-render.md).
+A free Web Service Blueprint is in `demo-web/render.yaml` (`rootDir: demo-web`). Steps, the lecturer token, spin-down, and the in-memory store are in [Deploy on Render](docs/deploy-render.md).

@@ -57,7 +57,7 @@ These rows were executed against `httpx.MockTransport`. They do not prove the ow
 
 ## Exit criteria for the automated suite
 
-- `python -m pytest` exits 0 in a clean venv created from `requirements.txt`.
+- From `demo-web/`, `pytest` exits 0 in a clean venv created from `requirements.txt`.
 - A failure in token, anomaly, export, agent, or connection tests blocks calling the demo "ready on the laptop."
 - A green suite does not close known UI gaps or the physical/live-model results table.
 

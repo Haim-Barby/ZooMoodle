@@ -139,6 +139,8 @@ cloudflared tunnel --url http://127.0.0.1:8000
 
 Open the printed `https://` URL on the phone and add `/student?room=ROOMID` (the lecturer page shows the full link). Keep the beacon on the laptop speakers, not on headphones. The phone page has an energy bar for the 18–19 kHz band; if it stays flat, type the on-screen code.
 
+`.env.example` sets `ZOOMODLE_ALLOWED_SUBNETS=192.114.48.0/21,192.114.56.0/23`. That is the RIPE registration Ariel-segments, measured on Ariel University Wi-Fi on 2026-11-03 (public egress 192.114.52.1). It also matches dorms and the campus VPN, so it only supports the ultrasonic token. Local 10.6.0.0/20 is not usable through the tunnel. cloudflared connects from loopback, and only those peers (`ZOOMODLE_TRUSTED_PROXIES`, default `127.0.0.1/32,::1/128`) may supply `CF-Connecting-IP` or `X-Forwarded-For`.
+
 Tests:
 
 ```bash

@@ -31,6 +31,7 @@
       <p class="note" id="mode-room"></p>
       <button id="choose-class" type="button">I'm in class</button>
       <button id="remote" class="warn" type="button">I'm remote</button>
+      <p id="mode-status" class="note" role="status"></p>
       <p class="note">Remote skips attendance. You get a marker so the lecturer knows you are not in the room. In class proves you can see or hear the rotating code.</p>
     </section>
 
@@ -38,8 +39,8 @@
       <h2>In class</h2>
       <label for="name">Name</label>
       <input id="name" autocomplete="name">
-      <label for="sid">Student id</label>
-      <input id="sid" autocomplete="off">
+      <label for="sid">Student id (optional)</label>
+      <input id="sid" autocomplete="off" placeholder="Leave empty, the server issues one">
       <p class="note">Pick a seat, then listen or enter the code on the lecturer's screen. The browser will ask for the microphone. High-frequency filters stay off.</p>
       <div id="zones" class="zones"></div>
       <div class="meter" aria-hidden="true"><span id="level"></span></div>

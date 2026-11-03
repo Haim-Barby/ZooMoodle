@@ -88,7 +88,7 @@ async function sign(record, challengeId, nonce) {
 const ERROR_TEXT = {
   unknown_room: "That room is not on this server.",
   room_closed: "This room is closed. Ask the lecturer if a new one is open.",
-  missing_identity: "Enter your student id first.",
+  missing_identity: "This browser could not create a device key. Reload the page and try again.",
   device_mismatch: "This device does not match the one that opened the challenge.",
   challenge_used: "That challenge was already used. Try again.",
   challenge_expired: "That challenge expired. Try again.",
@@ -129,14 +129,15 @@ function setCommentResult(message, ok) {
 
 async function checkIn(mode, tokenCode) {
   const who = identity();
-  if (!who.room || !who.studentId) {
-    setResult("Enter the room and your student id first.", false);
+  if (!who.room) {
+    setResult("Enter the room code first.", false);
     return;
   }
   if (!seat) {
     setResult("Pick a seat zone first.", false);
     return;
   }
+  setResult("Checking in…", true);
   const keys = await device();
   const id = await deviceId(keys.pub);
   const challenge = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/challenge", {
@@ -149,7 +150,7 @@ async function checkIn(mode, tokenCode) {
       public_jwk: { kty: keys.pub.kty, crv: keys.pub.crv, x: keys.pub.x, y: keys.pub.y },
     }),
   });
-  const opened = await challenge.json();
+  const opened = await challenge.json().catch(() => ({}));
   if (!challenge.ok) {
     setResult(explain(opened.error, "Could not open a challenge."), false);
     return;
@@ -167,19 +168,31 @@ async function checkIn(mode, tokenCode) {
       student_name: who.studentName,
     }),
   });
-  const body = await response.json();
+  const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    setResult(explain(body.error, "Check-in was rejected."), false);
+    setResult(explain(body.error, "Check-in was rejected (HTTP " + response.status + ")."), false);
     return;
   }
   const extra = body.external_token ? " Remote token: " + body.external_token : "";
   const flags = body.flags && body.flags.length ? " Flags: " + body.flags.join(", ") : "";
   const issued = body.attendance_id ? " Server id " + body.attendance_id + "." : "";
   setResult("Checked in (" + body.mode + "), confidence " + body.confidence + "." + flags + extra + issued, true);
-  if (body.attendance_id) enterLesson("in_class", body.attendance_id);
+  if (body.attendance_id) {
+    stopListening();
+    if (!document.querySelector("#sid").value.trim() && body.student_id) {
+      sessionStorage.setItem("zoomoodle-sid", body.student_id);
+    }
+    enterLesson("in_class", body.attendance_id);
+  } else {
+    setResult("The server did not return an attendance id. Try again.", false);
+  }
 }
 
 document.querySelector("#typed").addEventListener("click", () => {
+  if (!document.querySelector("#code").value.trim()) {
+    setResult("Enter the on-screen code first.", false);
+    return;
+  }
   checkIn("in_class", document.querySelector("#code").value.trim()).catch((err) => setResult(err.message, false));
 });
 
@@ -190,12 +203,24 @@ document.querySelector("#join-continue").addEventListener("click", async () => {
     note.textContent = "Enter the room code.";
     return;
   }
-  const response = await fetch("/api/rooms/" + encodeURIComponent(room));
+  note.textContent = "Looking up the room…";
+  let response;
+  try {
+    response = await fetch("/api/rooms/" + encodeURIComponent(room));
+  } catch (_err) {
+    note.textContent = "Could not reach the server. Check the connection and try again.";
+    return;
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     note.textContent = explain(body.error, "That room was not found.");
     return;
   }
+  if (body.closed) {
+    note.textContent = ERROR_TEXT.room_closed;
+    return;
+  }
+  note.textContent = "";
   flow.band = body.audio_band || "ultrasonic";
   flow.proof = body.proof || "both";
   sessionStorage.setItem("zoomoodle-room", room);
@@ -211,16 +236,30 @@ document.querySelector("#choose-class").addEventListener("click", () => {
 
 document.querySelector("#remote").addEventListener("click", async () => {
   const room = roomInput.value.trim();
-  const response = await fetch("/api/rooms/" + encodeURIComponent(room) + "/remote-join", { method: "POST" });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    document.querySelector("#join-status").textContent = explain(body.error, "Could not join remotely.");
+  const note = document.querySelector("#mode-status");
+  note.textContent = "Joining…";
+  let response;
+  try {
+    response = await fetch("/api/rooms/" + encodeURIComponent(room) + "/remote-join", { method: "POST" });
+  } catch (_err) {
+    note.textContent = "Could not reach the server. Check the connection and try again.";
     return;
   }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.marker) {
+    note.textContent = explain(body.error, "Could not join remotely (HTTP " + response.status + ").");
+    return;
+  }
+  note.textContent = "";
   enterLesson("remote", body.marker);
 });
 
 document.querySelector("#listen").addEventListener("click", async () => {
+  if (!seat) {
+    setResult("Pick a seat zone first.", false);
+    return;
+  }
+  if (listen.processor) stopListening();
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     listen.context = listen.context || new Ctx();
@@ -233,6 +272,7 @@ document.querySelector("#listen").addEventListener("click", async () => {
     listen.chunks = [];
     listen.checking = false;
     processor.onaudioprocess = (event) => {
+      if (flow.step === "lesson") return;
       const input = event.inputBuffer.getChannelData(0);
       listen.chunks.push(new Float32Array(input));
       const rate = listen.context.sampleRate;
@@ -261,7 +301,7 @@ document.querySelector("#listen").addEventListener("click", async () => {
         " · preamble " + (report.preamble < 0 ? 0 : report.preamble) +
         (report.bits ? " · bits " + report.bits.slice(0, 24) : "");
       const decoded = report.bytes;
-      if (decoded) {
+      if (decoded && flow.step !== "lesson") {
         listen.checking = true;
         const code = ZooFSK.base32(decoded);
         document.querySelector("#code").value = code;
@@ -272,17 +312,32 @@ document.querySelector("#listen").addEventListener("click", async () => {
     processor.connect(listen.context.destination);
     listen.processor = processor;
     listen.source = source;
+    setResult("Listening for the lecturer's tone…", true);
   } catch (err) {
-    setResult(err.message, false);
+    const denied = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
+    setResult(denied
+      ? "Microphone permission was refused. Allow it in the browser, or type the on-screen code."
+      : "Could not start the microphone: " + (err && err.message ? err.message : err), false);
   }
 });
 
-document.querySelector("#stop").addEventListener("click", () => {
-  if (listen.processor) listen.processor.disconnect();
+function stopListening() {
+  if (listen.processor) {
+    listen.processor.onaudioprocess = null;
+    listen.processor.disconnect();
+  }
   if (listen.source) listen.source.disconnect();
   if (listen.stream) listen.stream.getTracks().forEach((track) => track.stop());
+  if (listen.scanner) listen.scanner.getTracks().forEach((track) => track.stop());
+  listen.processor = null;
+  listen.source = null;
+  listen.stream = null;
+  listen.scanner = null;
+  listen.chunks = [];
   document.querySelector("#level-text").textContent = "Microphone is off.";
-});
+}
+
+document.querySelector("#stop").addEventListener("click", stopListening);
 
 async function loadPoll() {
   const room = roomInput.value.trim();

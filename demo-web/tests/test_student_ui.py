@@ -37,3 +37,19 @@ def test_student_errors_are_sentences_and_statuses_are_separate():
     checkin = script.split("async function checkIn")[1].split('"#typed"')[0]
     assert "explain(" in checkin
     assert "body.error ||" not in checkin
+
+
+def test_student_id_is_optional_and_the_mic_stops_after_check_in():
+    html = (ROOT / "app" / "static" / "student.html").read_text(encoding="utf-8")
+    script = (ROOT / "app" / "static" / "student.js").read_text(encoding="utf-8")
+    assert "Student id (optional)" in html
+    assert 'id="mode-status"' in html
+    checkin = script.split("async function checkIn")[1].split('"#typed"')[0]
+    assert "!who.studentId" not in checkin
+    assert "stopListening()" in checkin
+    assert 'if (flow.step === "lesson") return;' in script
+    stop = script.split("function stopListening")[1].split('"#stop"')[0]
+    assert "getTracks().forEach((track) => track.stop())" in stop
+    assert "onaudioprocess = null" in stop
+    remote = script.split('"#remote"')[1].split('"#listen"')[0]
+    assert "#mode-status" in remote and "#join-status" not in remote

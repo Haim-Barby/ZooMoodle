@@ -1,19 +1,8 @@
 # Lesson agent
 
-The summary and the homework review are one agent: a system prompt, a snapshot without names, a fixed set of read-only tools, and a loop that stops on a validated report or at a step limit. A single completion with the whole transcript pasted in is not the design, and it is not what the endpoints do.
+One tool-calling agent supports two tasks: **lesson_summary** relates transcript topics/times to polls, comments, and zone aggregates; **homework_review** reviews one submission and compares it anonymously with peers. Neither task assigns a grade.
 
-The prompt text below is the string in `app/llm/prompts.py`. If those two diverge, the code is the one that runs.
-
-## Role and goals
-
-The agent helps a lecturer see which topic, time, and seat zone lost the class, and it reviews one homework submission with an anonymized comparison to peers.
-
-It is not a grader. It does not assign marks, points, or pass/fail. Attention numbers, when any exist, are an indicator for the lecturer.
-
-Two tasks:
-
-1. **lesson_summary** — link transcript topics and times to poll mistakes and attention drops per zone, then recommend what to revisit next lesson.
-2. **homework_review** — review one submission for a student or for the lecturer, and compare it with other submissions through the similarity tool.
+The system prompt below is defined in [`app/llm/prompts.py`](../app/llm/prompts.py). The task message adds an index of room/title, poll ids/questions, comment count, homework ids, transcript length, and attention availability. Full text is fetched through tools.
 
 ## System prompt
 
@@ -33,8 +22,6 @@ Rules:
 - Call at least one data tool before produce_report.
 - When the evidence is enough, call produce_report. On a homework review, set not_a_grade to true.
 ```
-
-The user message adds the task and a short index: room id, title, poll ids and questions, comment count, homework ids, transcript length, and whether attention is empty. Full texts are not in that index. The model is supposed to fetch them.
 
 ## Context the tools can see
 
@@ -57,7 +44,7 @@ The attendance sheet (names, device ids, confidence) is not in the snapshot.
 
 ## Tools
 
-All of these are read-only except `produce_report`, which only validates and ends the loop. None of them write attendance or call another model.
+Data tools are read-only. `produce_report` validates and ends the loop; no tool calls another model or writes lesson data.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
@@ -116,25 +103,15 @@ Homework review (`kind` must be `homework_review`):
 
 `not_a_grade` must be the boolean `true`. Any other value is a tool error.
 
-## Guardrails
+## Limits and configuration
 
-- No names or raw student ids are placed in the snapshot on purpose. Redaction is best-effort on known names. A name that was never typed into ZooMoodle can still sit inside homework the student pasted. The prompt tells the model not to turn that into an identity.
-- Tools cannot update the room.
-- Findings are supposed to cite a poll id, a transcript span, a comment id, a submission id, or an attention aggregate.
-- Missing inputs stay in `missing_data`.
-- The demo's attention path is empty unless someone pressed the labeled sample button. The tool says so.
-- No API key: the endpoint returns 503 and does not call a provider. The message says no model was called.
-- Tests may install a scripted provider that returns canned tool calls. That provider is not the default, and its reports are still passed through the same schema checks. The UI never labels scripted output as a live model.
+Redaction covers known names/ids only; an unknown name pasted into homework can remain. Reports request citations, but structural validation does not prove their accuracy. The loop requires a data-tool call, not a complete pedagogical review. The current word tokenizer also needs Hebrew support.
 
-## Providers
-
-The lecturer sets provider, model, and base URL in the page or in the environment. The key is posted to the server and kept in memory. Connection test: `docs/07-design.md` sequence `seq-llm-test`, requirement FR-18.
-
-Supported names: `openai`, `anthropic`, `gemini`, `xai`, `ollama`, `openai_compatible`.
+Attention is empty unless labeled samples were loaded. No configured model means HTTP 503 and no provider call. Provider configuration and key storage follow FR-16–18 in the [SRS](04-SRS.md). Save settings before testing if the key is needed for later agent calls; Test alone does not save it. Supported adapters and protocols are listed in [components](06-components.md#llm-adapters).
 
 ## Evaluation
 
-Automated, on this VM, with no live key:
+Automated with scripted providers and mocked HTTP, without a live key:
 
 - A script that calls `produce_report` first is forced to call a data tool, then a valid summary is accepted.
 - A homework report with `not_a_grade: false` is rejected; the corrected report is accepted, and a name the model wrote is scrubbed.
@@ -142,4 +119,4 @@ Automated, on this VM, with no live key:
 - Poll tool output and Jaccard appear in the tool channel the script can see.
 - API test: a transcript containing a known name is redacted before the scripted agent runs, and the HTTP body does not contain the name or the API key.
 
-Not evaluated here: whether a particular live model follows the prompt, cites well, or stays inside the schema without retries. That needs the owner's key and a real transcript. The connection test is the first check; the demo script then runs one summary.
+Live evaluation remains open: test tool calling, factual support, citation quality, and report validity on a real transcript and homework. A successful connection test alone does not establish these.

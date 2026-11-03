@@ -23,16 +23,17 @@ A voice-band lowpass inside `tests/test_fsk.py` shows the lab signal does not su
 | FR-2 room key | `KeyManager` | `test_hkdf_is_stable_and_salt_separates_rooms` |
 | FR-3, FR-5 token life | `TokenService` | `test_token_round_trip_and_rejection`, `test_previous_window_is_late_and_older_window_fails` |
 | FR-4, FR-5, FR-6 check-in | `AttendanceService` | `test_two_devices_can_redeem_one_broadcast_and_one_device_cannot_reuse_it`, `test_bad_signature_and_expired_challenge_are_rejected`, API check-in |
-| FR-7 seat zone | `SeatZone` | bad zone is rejected inside check-in paths (API and service) |
+| FR-7 seat zone | `SeatZone` | Valid zones occur in check-in tests; a dedicated invalid-zone rejection test is still missing. |
 | FR-8 anomalies | `AnomalyDetector`, `DeviceBinding` | `test_late_token_remote_and_anomalies` |
-| FR-9 subnet | `subnet_status` | covered as an input to confidence in the anomaly test (`mismatch` lowers confidence). Live campus CIDR is manual. |
+| FR-9 subnet | `client_ip`, `subnet_status` | `tests/test_net.py`: trusted/untrusted proxies, Ariel ranges, mismatches, unconfigured list. Physical campus validation pending. |
 | FR-10 export | `ExportService` | `test_csv_and_xlsx_contain_the_same_columns`, API CSV/XLSX |
 | FR-11 polls | `Store.add_poll` | `test_checkin_export_and_hidden_poll_answer` |
 | FR-12, privacy of names | `Store.snapshot`, `redact` | `test_summary_agent_and_name_redaction`, `test_redaction_helpers` |
+| FR-13 transcript | `Store.set_transcript`, upload API | Summary tests use a short transcript; upload/size-limit edge cases need dedicated coverage. |
 | FR-14, FR-15 agent | `LessonAgent`, `ToolRegistry`, `SummaryService` | `test_summary_agent_must_call_a_tool_then_report`, `test_homework_review_requires_not_a_grade_and_hides_names`, `test_agent_stops_without_inventing_a_report`, API summary |
 | FR-16 no key | API gate `_require_llm` | `test_summary_without_a_key_does_not_invent_output` |
 | FR-17, FR-18 connection | `LLMClient.test_connection`, adapters | `tests/test_llm_connection.py`, `test_llm_config_never_returns_the_key_and_test_classifies_errors` |
-| FR-19 attention label | `AttentionAggregator` | rejected source is a `ValueError`; the sample button in the UI sends only `sample-not-camera` |
+| FR-19 attention label | `AttentionAggregator` | Source validation exists in code; dedicated automated rejection coverage is missing. |
 | FR-20 lecturer token | API | `test_health_and_lecturer_token_gate`, token GET without a header |
 | Acoustic framing | `audio_fsk`, `fsk.js` | `test_clean_noise_and_voice_band`, `test_wav_round_trip_matches_the_on_screen_code`, plus the Node interop in the tools report |
 
@@ -56,9 +57,9 @@ These rows were executed against `httpx.MockTransport`. They do not prove the ow
 
 ## Exit criteria for the automated suite
 
-- `pytest` exits 0 on a clean venv created from `requirements.txt`.
+- `python -m pytest` exits 0 in a clean venv created from `requirements.txt`.
 - A failure in token, anomaly, export, agent, or connection tests blocks calling the demo "ready on the laptop."
-- A green suite does not close the classroom table.
+- A green suite does not close known UI gaps or the physical/live-model results table.
 
 ## Manual acceptance (owner)
 

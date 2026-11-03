@@ -8,7 +8,7 @@ Beforehand, on the laptop:
 2. Set `ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_TOKEN`. The copied `.env` already allows Ariel public ranges `192.114.48.0/21` and `192.114.56.0/23` (RIPE netname Ariel-segments, measured 2026-11-03 from egress 192.114.52.1). That registration also covers dorms and the campus VPN, so a subnet match only supports the ultrasonic token. Local `10.6.0.0/20` is not usable through NAT or cloudflared. Forwarded client IPs count only from `ZOOMODLE_TRUSTED_PROXIES` (default loopback).
 3. Leave the LLM key empty until the connection-test minute, or put it only in the lecturer page.
 4. Start Uvicorn. In another terminal start cloudflared (or another tunnel) to `http://127.0.0.1:8000`.
-5. Open the lecturer page on the laptop at `http://127.0.0.1:8000`. Open the student link on a phone using the tunnel's `https://` URL. Allow the microphone.
+5. Open the lecturer page through the tunnel's `https://` URL, so its generated student link uses the same public origin. Open that link on a phone and allow the microphone. A link generated at localhost must have its origin replaced before sharing.
 6. Put the phone where it can hear the laptop speakers. Unmute the laptop. Do not play the beacon through headphones.
 
 | Minute | Who | Do this | Pass looks like |
@@ -22,8 +22,8 @@ Beforehand, on the laptop:
 | 4:45 | Lecturer | Download CSV and XLSX. Open one file. | Columns include mode, zone, confidence, flags. |
 | 5:30 | Lecturer | Ask a two-option poll. Student answers. | Counts, and counts for that seat zone. |
 | 6:15 | Student | Send a one-line comment. | It shows on the lecturer page with the name. |
-| 7:00 | Lecturer | Provider, model, key, Test connection. | `ok` or a specific error category. Latency and tool-calling shown. Key not visible afterwards. |
-| 8:00 | Lecturer | Upload a short transcript with a couple of `mm:ss` lines. Run lesson summary. | A JSON report with citations, or a clear configuration/provider error. Not a canned paragraph. |
+| 7:00 | Lecturer | Enter provider/model/key, Save settings, then Test connection. Test alone clears the input without saving. | `ok` or a specific error category. Latency and tool-calling shown. Key not visible afterwards. |
+| 8:00 | Lecturer | Upload a short transcript prepared from a recording, with a couple of `mm:ss` lines. Run lesson summary. | A JSON report with citations, or a clear configuration/provider error. Not a canned paragraph. |
 | 9:00 | Student | Paste a short homework answer and ask for a review. | Report with `not_a_grade: true`, peers only as ids, or the same clear error if no key. |
 | 9:40 | Lecturer | Show the attention panel and say it is a labeled sample, not a camera. | Disclaimer visible. No claim of face recognition. |
 

@@ -1,8 +1,6 @@
 # Technical tools report
 
-This report chooses a tool for each concern in the ZooMoodle demo and records what was actually run on the development VM. It does not record a classroom result. The empty table at the end is for the owner to fill on real phones, on the university network, and with a tunnel from campus.
-
-Nothing in the VM spikes used a live LLM key. No phone microphone was attached. `cloudflared` and `ngrok` are not installed here.
+Tool choices and historical experiments from the development VM (Python 3.12.3). No physical phone, tunnel, or live-model trial was performed there. Original outputs are preserved below; the [conclusions](11-conclusions.md) distinguish this run from the later local review.
 
 ## Choices
 
@@ -15,8 +13,8 @@ Nothing in the VM spikes used a live LLM key. No phone microphone was attached. 
 | HTTPS tunnel | cloudflared, ngrok | cloudflared, documented, not run here | Phone microphone access needs a secure context. Neither binary is installed on this VM. |
 | Attention / head pose | MediaPipe Face Landmarker, a manual stub | Stub in the demo. MediaPipe was only spiked. | The library imports. A blank image produced no face and no pose matrix. There is no camera on this VM, so the demo does not pretend to see the room. |
 | LLM | One vendor SDK, or a small adapter | Adapter for OpenAI, Anthropic, Gemini, xAI, Ollama, and any OpenAI-compatible base URL | The lecturer picks the provider in the UI or in `.env`. No live call was made. Tests use a fake HTTP transport or a scripted tool-calling provider. |
-| Transcript | Live Zoom/Meet API, file import | UTF-8 text file import | The assignment says not to integrate with Zoom. |
-| Automated tests | pytest, Playwright | pytest 9.2.0 | 25 tests passed on this VM. Playwright is not installed and was not run. |
+| Transcript | Live Zoom/Meet API, file import | UTF-8 text file import | The assignment does not require Zoom integration. |
+| Automated tests | pytest, Playwright | pytest 9.2.0 | Historical VM run: 25 passed. Later local run: 29 passed using `python -m pytest`. See conclusions. |
 | Diagrams | PlantUML, Graphviz-only, a drawing tool | PlantUML 1.2025.2 sources plus SVG | Rendered locally with Java and Graphviz. |
 
 Python on the VM: 3.12.3. Demo dependencies are pinned in `requirements.txt`. ggwave, MediaPipe, and NumPy were installed only inside the spike environment. They are not demo dependencies.
@@ -144,11 +142,11 @@ No face, so no facial transformation matrix and no head-pose angle. No camera wa
 
 ### Automated tests
 
-`pytest -v` on this tree: **25 passed**, 1 warning. The warning is Starlette's deprecation notice that `TestClient` still uses `httpx` and would prefer `httpx2`. The full list is in [11-conclusions.md](11-conclusions.md).
+Historical VM run, `pytest -v`: **25 passed**, 1 warning. Later local review: **29 passed** with `python -m pytest -q`; direct `pytest` failed to import `app`. Environments and the Starlette warning are recorded in [conclusions](11-conclusions.md).
 
 ## Classroom results (owner)
 
-Leave this blank until the demo. Do not copy the VM rows into it.
+Fill with observed results after physical trials; VM simulations do not close these checks.
 
 | Check | Device / place | Result | Notes |
 | --- | --- | --- | --- |
@@ -158,7 +156,7 @@ Leave this blank until the demo. Do not copy the VM rows into it.
 | On-screen code fallback | | | |
 | Remote row stays separate from in-class | | | |
 | Anomaly flags (both modes, shared device, late code) | | | |
-| University Wi-Fi subnet check | campus SSID | | Set `ZOOMODLE_ALLOWED_SUBNETS` first. A tunnel often hides the campus IP. |
+| University Wi-Fi subnet check | campus SSID | | Verify the configured Ariel ranges and trusted-proxy forwarded IP; a match does not prove classroom presence. |
 | cloudflared (or similar) HTTPS from campus | | | The phone must open the `https://` URL, not the laptop's `http://127.0.0.1`. |
 | Relay attempt (phone call or recording) does not carry the tone | | | |
 | Test connection with the real key | lecturer laptop | | Confirm provider, model, latency, and tool-calling. |

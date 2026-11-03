@@ -1,59 +1,37 @@
 # Conclusions (draft)
 
-Draft for the owner. It records what this repository contains and what was run on the development VM. It does not record an in-class demo. Replace the empty section at the end after the demo. Do not paste VM results in as if they were classroom results.
+The design and demo are present. Real-phone trials, live-model validation, and the classroom demonstration have not been performed. Complete the result table below after the demo.
 
-## What was built
+## Built and tested
 
-A single-process demo: FastAPI, static lecturer and student pages, HKDF room keys, HMAC broadcast tokens, 18/19 kHz FSK in Python and in the browser, device signatures, anomaly flags, CSV/XLSX export, polls, comments, and a tool-calling lesson agent with a provider adapter (OpenAI, Anthropic, Gemini, xAI, Ollama, or another OpenAI-compatible URL) and a connection test.
+The application combines lesson rooms, acoustic and typed attendance, device signatures, anomaly flags, CSV/XLSX export, polls, comments, transcript import, and tool-calling lesson/homework agents. The architecture is a single FastAPI process with static browser pages and an in-memory store. Attention is a labeled-sample stub.
 
-Attention is a stub that accepts only samples labeled `sample-not-camera`. MediaPipe is not called by the app.
+Recorded automated runs:
 
-No Moodle or Zoom integration. The store is memory only.
+| Environment | Command | Result |
+| --- | --- | --- |
+| Development VM, Python 3.12.3 / pytest 9.2.0 — historical run | `pytest -v` | 25 passed, 1 warning in 0.52s |
+| Local review, 2026-11-03, Python 3.14.3 / pytest 9.2.0 | `python -m pytest -q` | 29 passed, 1 warning |
 
-## What was tested on the VM
+The warning concerns Starlette's deprecated `httpx` TestClient integration. Direct `pytest` failed to import `app` in the local review; the module command above worked. The [testing strategy](08-testing-strategy.md) maps coverage to classes; the [tools report](02-tools-report.md) preserves the original VM experiment outputs.
 
-Automated suite, command `pytest -v` with pytest 9.2.0 and Python 3.12.3:
+Local browser checks confirmed typed and remote attendance. FSK tests exchange WAV data or use simulated input; they do not demonstrate physical reception on a phone. Agent tests use scripted or mocked providers, not real model output.
 
-```text
-25 passed, 1 warning in 0.52s
-```
+## Remaining work
 
-The warning is Starlette saying that `TestClient` still uses `httpx` and would prefer `httpx2`. It did not fail a test.
+- Fix repeated acoustic check-ins, duplicate attendance rows, room restoration after refresh, first-use model-settings loading, and raw student error messages.
+- Use an HTTPS origin for phone links and Save settings before Test connection. Improve Hebrew word-token comparison and prevent synchronous model calls from blocking other requests.
+- Validate physical audio, campus HTTPS/network behavior, and actual lesson/homework reports. Then perform the classroom demo and conclude from the observed results.
 
-Passed tests:
-
-- Agent: tool required before the report, homework `not_a_grade`, stop with no invented report, redaction helpers.
-- API: lecturer token, check-in plus CSV/XLSX, poll correct option hidden from students, key absent from config and from a 401 connection test, summary blocked with no key, summary path with a scripted provider and a redacted name.
-- Attendance: two devices one code, reuse rejected, bad signature, expired challenge, late token, remote row, both-modes, shared device, multi-device.
-- Export columns for CSV and XLSX.
-- FSK clean decode, small noise, voice-band filter removes the payload, WAV round trip.
-- Connection categories: tool call, no tool call, tool request rejected then a plain completion, 401, 403, 404, 429, timeout, network, unknown provider, missing key, Anthropic and Gemini tool JSON.
-- HKDF stability and token windows.
-
-Spikes, with outputs in `docs/02-tools-report.md`: FastAPI `/ping`, HKDF/HMAC, CSV/XLSX, FSK including a Node/Python WAV exchange (`010203040506` both ways, Base32 `AEBAGBAFAY`), ggwave protocol 5 round trip of `ZK7Q` (not selected; energy near 7.5–8.2 kHz and 16.5 kHz), PlantUML SVG render, MediaPipe 1.2.0 face landmarker on a blank image (0 faces, 0 matrices) after `libEGL` was installed. The first MediaPipe call failed on a missing `libEGL.so.1`. The first `ggwave` build failed on a missing `Python.h`.
-
-No live LLM request was sent. No phone, no speaker-to-mic trial, no tunnel, and no campus subnet were available on this VM.
-
-## What is explicitly not claimed
-
-- A class demo happened.
-- Ultrasonic check-in works on iPhone or Android.
-- A real model produced a lesson summary or a homework review.
-- Attendance cannot be faked.
-- The attention map observed a class.
-
-## In-class results (owner fills this in)
+## Classroom results
 
 | Item | Result | Notes |
 | --- | --- | --- |
-| Date and room | | |
-| Phones used | | |
-| Ultrasonic check-in | | |
-| Fallback code | | |
-| Remote vs in-class | | |
+| Date, room, phones | | |
+| Acoustic attendance and code fallback | | |
+| Remote/in-class separation and anomaly flags | | |
 | Export opened | | |
-| Poll by zone | | |
-| Test connection (provider, model, latency, tool calling, or error category) | | |
-| Lesson agent | | |
-| Homework agent | | |
-| What to change before a second demo | | |
+| Poll by zone and student comment | | |
+| Model connection: provider, model, latency, tool calling | | |
+| Lesson summary and homework review | | |
+| Limitations and next changes | | |

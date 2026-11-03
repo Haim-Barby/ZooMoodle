@@ -168,7 +168,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .grid { display: grid; gap: 0.8rem; }
 .grid.two { grid-template-columns: 1.3fr 0.7fr; }
 .grid.stats { grid-template-columns: repeat(3, 1fr); }
-.card { padding: 0.95rem; }
+.card { padding: 0.95rem; margin-bottom: 0.8rem; }
 .stat { font-size: 1.8rem; font-variant-numeric: tabular-nums; margin: 0.15rem 0; }
 .mono, .code, #beacon-code { font-family: var(--mono); }
 #beacon-code { font-size: 1.8rem; letter-spacing: 0.08em; margin: 0.2rem 0; }

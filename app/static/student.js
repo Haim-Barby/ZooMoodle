@@ -67,6 +67,7 @@ async function sign(record, challengeId, nonce) {
 
 const ERROR_TEXT = {
   unknown_room: "That room is not on this server.",
+  room_closed: "This room is closed. Ask the lecturer if a new one is open.",
   missing_identity: "Enter your student id first.",
   device_mismatch: "This device does not match the one that opened the challenge.",
   challenge_used: "That challenge was already used. Try again.",

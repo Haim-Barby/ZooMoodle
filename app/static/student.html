@@ -7,54 +7,60 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <h1>ZooMoodle</h1>
-    <p>Check in from this phone. Allow the microphone when the browser asks. The page needs HTTPS.</p>
+  <header class="workspace" style="padding-bottom:0">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">Z</div>
+      <div>
+        <strong>ZooMoodle</strong>
+        <div class="note">Check in from this phone. The page needs HTTPS for the microphone.</div>
+      </div>
+    </div>
   </header>
-  <main>
-    <section>
-      <h2>You</h2>
-      <label for="room">Room</label>
-      <input id="room" autocomplete="off">
+  <main class="workspace">
+    <section class="card">
+      <h2>Join</h2>
+      <label for="room">Room code</label>
+      <input id="room" autocomplete="off" inputmode="text">
       <label for="name">Name</label>
       <input id="name" autocomplete="name">
       <label for="sid">Student id</label>
       <input id="sid" autocomplete="off">
-      <p id="who" class="note"></p>
+      <p id="who" class="note">Open the lecturer's link, or type the room code.</p>
     </section>
 
-    <section>
+    <section class="card">
       <h2>Seat</h2>
+      <p class="note">Pick the zone that matches where you are sitting.</p>
       <div id="zones" class="zones"></div>
     </section>
 
-    <section>
+    <section class="card">
       <h2>Check in</h2>
-      <p class="note">Hold the phone where it can hear the lecturer's speakers. The bar shows energy near 18–19 kHz. If the room is quiet at those frequencies, type the code from the lecturer's screen.</p>
+      <p class="note">In class, the browser will ask for the microphone. Hold the phone where it can hear the lecturer's speakers. The bar shows energy near 18–19 kHz. If the room is quiet there, type the code from the screen.</p>
       <div class="meter" aria-hidden="true"><span id="level"></span></div>
       <p id="level-text" class="note">Microphone is off.</p>
-      <button id="listen" type="button">Listen and check in</button>
+      <button id="listen" type="button">I'm in class</button>
       <button id="stop" class="secondary" type="button">Stop listening</button>
       <label for="code">On-screen code</label>
       <input id="code" autocomplete="off" autocapitalize="characters">
       <button id="typed" class="secondary" type="button">Check in with code</button>
-      <button id="remote" class="warn" type="button">I'm joining remotely</button>
-      <p id="check-result" class="note"></p>
+      <button id="remote" class="warn" type="button">I'm remote</button>
+      <p id="check-result" class="note" role="status"></p>
     </section>
 
-    <section>
+    <section class="card">
       <h2>Poll</h2>
       <div id="poll" class="note">No poll yet.</div>
     </section>
 
-    <section>
+    <section class="card">
       <h2>Comment</h2>
       <textarea id="comment" placeholder="A question or suggestion"></textarea>
       <button id="send-comment" type="button">Send</button>
-      <p id="comment-result" class="note"></p>
+      <p id="comment-result" class="note" role="status"></p>
     </section>
 
-    <section>
+    <section class="card">
       <h2>Homework</h2>
       <p class="note">A review is not a grade. Peers are compared by anonymous id.</p>
       <textarea id="homework" placeholder="Paste your answer"></textarea>

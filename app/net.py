@@ -1,16 +1,50 @@
-"""Client IP and optional campus-subnet check."""
+"""Client IP and optional campus-subnet check.
+
+Forwarded headers are honored only when the socket peer is a trusted proxy.
+cloudflared on the lecturer laptop connects from loopback, which is the default.
+"""
 
 from __future__ import annotations
 
 import ipaddress
 
+DEFAULT_TRUSTED_PROXIES = ("127.0.0.1/32", "::1/128")
 
-def client_ip(headers: dict, fallback: str | None) -> str:
-    for name in ("cf-connecting-ip", "x-forwarded-for"):
-        value = headers.get(name) or headers.get(name.title())
-        if value:
-            return value.split(",")[0].strip()
-    return fallback or ""
+
+def client_ip(
+    headers: dict,
+    peer: str | None,
+    trusted_proxies: tuple[str, ...] = DEFAULT_TRUSTED_PROXIES,
+) -> str:
+    direct = (peer or "").strip()
+    if peer_is_trusted(direct, trusted_proxies):
+        forwarded = _header(headers, "cf-connecting-ip") or _header(headers, "x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return direct
+
+
+def peer_is_trusted(peer: str, trusted_proxies: tuple[str, ...]) -> bool:
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    for raw in trusted_proxies:
+        try:
+            network = ipaddress.ip_network(raw, strict=False)
+        except ValueError:
+            continue
+        if address in network:
+            return True
+    return False
+
+
+def _header(headers: dict, name: str) -> str:
+    wanted = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == wanted and value and str(value).strip():
+            return str(value).strip()
+    return ""
 
 
 def subnet_status(ip: str, allowed: tuple[str, ...]) -> str:

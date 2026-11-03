@@ -6,6 +6,8 @@ import os
 import secrets
 from dataclasses import dataclass
 
+from app.net import DEFAULT_TRUSTED_PROXIES
+
 
 def load_dotenv(path: str = ".env") -> None:
     """Load KEY=VALUE lines. Existing environment variables win."""
@@ -37,6 +39,7 @@ class Settings:
     grace_windows: int = 1
     challenge_max_age_seconds: float = 8.0
     allowed_subnets: tuple[str, ...] = ()
+    trusted_proxies: tuple[str, ...] = DEFAULT_TRUSTED_PROXIES
     llm_provider: str = ""
     llm_model: str = ""
     llm_base_url: str = ""
@@ -60,6 +63,11 @@ class Settings:
         subnets = tuple(
             part.strip() for part in _env("ZOOMODLE_ALLOWED_SUBNETS").split(",") if part.strip()
         )
+        proxy_text = os.environ.get("ZOOMODLE_TRUSTED_PROXIES")
+        if proxy_text is None or not proxy_text.strip():
+            proxies = DEFAULT_TRUSTED_PROXIES
+        else:
+            proxies = tuple(part.strip() for part in proxy_text.split(",") if part.strip())
         try:
             window = int(_env("ZOOMODLE_TOKEN_WINDOW_SECONDS", "5") or "5")
         except ValueError:
@@ -83,6 +91,7 @@ class Settings:
             generated_lecturer_token=generated_token,
             token_window_seconds=max(1, window),
             allowed_subnets=subnets,
+            trusted_proxies=proxies,
             llm_provider=_env("LLM_PROVIDER"),
             llm_model=_env("LLM_MODEL"),
             llm_base_url=_env("LLM_BASE_URL"),

@@ -102,7 +102,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             signature = _decode_signature(str(body.get("signature") or ""))
         except Exception as exc:
             raise StoreError("bad_signature", 400) from exc
-        ip = client_ip(dict(request.headers), request.client.host if request.client else None)
+        ip = client_ip(
+            dict(request.headers),
+            request.client.host if request.client else None,
+            settings.trusted_proxies,
+        )
         subnet = "not_applicable"
         mode = str(body.get("mode") or "")
         if mode == "in_class":

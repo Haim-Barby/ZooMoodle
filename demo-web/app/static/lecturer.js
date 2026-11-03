@@ -101,6 +101,9 @@ function showRoom(room) {
   state.band = room.audio_band || state.band;
   state.proof = room.proof || state.proof;
   state.joinLink = link;
+  updateBandNote();
+  const roomsBox = document.querySelector("#open-rooms");
+  if (roomsBox) roomsBox.textContent = "";
   if (room.audio_band) document.querySelector("#audio-band").value = room.audio_band;
   if (room.proof) document.querySelector("#proof").value = room.proof;
   document.querySelector("#play").disabled = !!room.closed || state.proof === "qr";
@@ -110,6 +113,45 @@ function showRoom(room) {
   qr.innerHTML = svg;
   qr.hidden = !svg;
   document.querySelector("#live-pill").textContent = room.closed ? "Closed" : "Live";
+}
+
+const PROOF_TEXT = { both: "sound or rotating QR", sound: "sound only", qr: "rotating QR only" };
+
+function updateBandNote() {
+  const node = document.querySelector("#attendance-band-note");
+  if (!node) return;
+  const band = window.ZooFSK ? ZooFSK.bandOf(state.band) : null;
+  const bandName = { ultrasonic: "ultrasonic", near: "near-ultrasonic", audible: "audible" }[state.band] || state.band;
+  const proof = PROOF_TEXT[state.proof] || state.proof;
+  node.textContent = state.proof === "qr"
+    ? "In-class rows used the rotating one-time code (" + proof + ")."
+    : "In-class rows used the rotating one-time code, " + bandName + " band" +
+      (band ? " " + band.label : "") + " (" + proof + ").";
+}
+
+async function listOpenRooms() {
+  const box = document.querySelector("#open-rooms");
+  if (!box) return;
+  box.textContent = "";
+  let body;
+  try { body = await api("/api/rooms"); } catch (_err) { return; }
+  const rooms = (body && body.rooms) || [];
+  if (!rooms.length) return;
+  const title = document.createElement("p");
+  title.textContent = "Open rooms on this server:";
+  box.appendChild(title);
+  rooms.forEach((room) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.dataset.room = room.id;
+    button.textContent = "Reopen " + room.id + " · " + room.title + " (" + room.counts.in_class + " in class, " + room.counts.remote + " remote)";
+    button.addEventListener("click", async () => {
+      sessionStorage.setItem(ROOM_KEY, room.id);
+      await restoreRoom();
+    });
+    box.appendChild(button);
+  });
 }
 
 function forgetRoom(message) {
@@ -156,13 +198,17 @@ document.querySelector("#close-room").addEventListener("click", async () => {
 
 async function restoreRoom() {
   const saved = sessionStorage.getItem(ROOM_KEY);
-  if (!saved) return;
+  if (!saved) {
+    await listOpenRooms();
+    return;
+  }
   try {
     const room = await api("/api/rooms/" + encodeURIComponent(saved));
     showRoom(room);
   } catch (err) {
     if (err.message === "unknown_room") {
       forgetRoom("That room is no longer on this server. Open a new one.");
+      await listOpenRooms();
       return;
     }
     document.querySelector("#room-info").textContent = err.message;
@@ -195,6 +241,7 @@ async function refreshOverview() {
     document.querySelector("#play").disabled = body.closed || body.proof === "qr";
     document.querySelector("#rotating-qr").hidden = body.proof === "sound";
   }
+  updateBandNote();
   if (body.token) {
     document.querySelector("#beacon-code").textContent = body.token.code;
     document.querySelector("#beacon-meta").textContent =
@@ -335,6 +382,7 @@ document.querySelector("#save-proof").addEventListener("click", async () => {
     });
     state.band = saved.audio_band;
     state.proof = saved.proof;
+    updateBandNote();
     document.querySelector("#proof-state").textContent = "Saved. Phones follow " + saved.audio_band + " / " + saved.proof + ".";
     document.querySelector("#play").disabled = state.closed || saved.proof === "qr";
     document.querySelector("#rotating-qr").hidden = saved.proof === "sound";

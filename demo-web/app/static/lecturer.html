@@ -69,6 +69,7 @@
               <button id="close-room" class="secondary" type="button" disabled>Close room</button>
             </div>
             <p class="note">Closing stops new check-ins. Export still works. A new room gets a new key and salt.</p>
+            <div id="open-rooms" class="note"></div>
             <h2>Join</h2>
             <p id="student-link" class="link note">The public link appears here.</p>
             <div id="qr" class="qr" hidden></div>
@@ -89,7 +90,7 @@
       <section class="panel" data-panel="attendance" hidden>
         <article class="card">
           <h2>Attendance</h2>
-          <p class="note">In-class rows used the ultrasonic one-time code. Remote rows carry an external token. Flags mark shared devices, a second device, both modes, a late code, or a subnet mismatch.</p>
+          <p class="note"><span id="attendance-band-note">In-class rows used the rotating one-time code.</span> Remote rows carry an external token. Flags mark shared devices, a second device, both modes, a late code, or a subnet mismatch.</p>
           <div class="row">
             <button id="refresh" class="secondary" type="button">Refresh</button>
             <button id="csv" class="secondary" type="button">Download CSV</button>

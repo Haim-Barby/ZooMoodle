@@ -76,3 +76,13 @@ def test_lecturer_script_restores_the_saved_room_or_drops_it():
     assert "room.student_url || room.student_path" in script
     assert 'err.message === "unknown_room"' in script
     assert "restoreRoom()" in script
+
+
+def test_attendance_note_names_the_room_band_and_open_rooms_can_be_reopened():
+    html = (ROOT / "app" / "static" / "lecturer.html").read_text(encoding="utf-8")
+    script = (ROOT / "app" / "static" / "lecturer.js").read_text(encoding="utf-8")
+    assert "used the ultrasonic one-time code" not in html
+    assert 'id="attendance-band-note"' in html
+    assert 'id="open-rooms"' in html
+    assert "function updateBandNote" in script
+    assert 'api("/api/rooms")' in script

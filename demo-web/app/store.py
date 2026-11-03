@@ -10,7 +10,7 @@ from app.attention import AttentionAggregator
 from app.config import Settings
 from app.crypto_tokens import IssuedToken, KeyManager, TokenService
 from app.attendance import AttendanceService
-from app.domain import SEAT_ZONES, Comment, HomeworkSubmission, Poll
+from app.domain import SEAT_ZONES, Comment, HomeworkSubmission, Poll, Question
 from app.llm.providers import LLMConfig
 from app.llm.tools import pseudonym, redact
 
@@ -33,6 +33,7 @@ class Room:
         self.attendance = attendance
         self.polls: list[Poll] = []
         self.comments: list[Comment] = []
+        self.questions: list[Question] = []
         self.homework: list[HomeworkSubmission] = []
         self.transcript = ""
         self.attention = AttentionAggregator()
@@ -40,6 +41,8 @@ class Room:
         self.closed = False
         self.audio_band = "ultrasonic"
         self.proof = "both"
+        self.summary_draft = ""
+        self.summary_published = ""
 
 
 class Store:
@@ -114,12 +117,14 @@ class Store:
         room.polls.append(poll)
         return poll
 
-    def answer_poll(self, room_id: str, poll_id: str, student_id: str, option: str, seat_zone: str) -> None:
+    def answer_poll(self, room_id: str, poll_id: str, student_id: str, option: str, seat_zone: str) -> Poll:
         room = self.get(room_id)
         student_id = student_id.strip()
         if not student_id:
             raise StoreError("missing_identity")
-        if seat_zone not in SEAT_ZONES:
+        zone = (seat_zone or "").strip()
+        # Remote students have no seat. An empty zone is still rejected.
+        if zone != "remote" and zone not in SEAT_ZONES:
             raise StoreError("bad_zone")
         poll = next((item for item in room.polls if item.id == poll_id), None)
         if poll is None:
@@ -128,7 +133,59 @@ class Store:
             raise StoreError("bad_option")
         if any(answer["student_id"] == student_id for answer in poll.answers):
             raise StoreError("already_answered")
-        poll.answers.append({"student_id": student_id, "option": option, "seat_zone": seat_zone})
+        poll.answers.append({"student_id": student_id, "option": option, "seat_zone": zone})
+        return poll
+
+    def add_question(self, room_id: str, student_id: str, text: str) -> Question:
+        room = self.get(room_id)
+        student_id = student_id.strip()
+        text = (text or "").strip()
+        if not student_id:
+            raise StoreError("missing_identity")
+        if not text:
+            raise StoreError("missing_question")
+        question = Question(
+            id=secrets.token_hex(4),
+            student_id=student_id[:80],
+            text=text[:1000],
+            at=time.time(),
+        )
+        room.questions.append(question)
+        return question
+
+    def upvote_question(self, room_id: str, question_id: str, student_id: str) -> Question:
+        room = self.get(room_id)
+        student_id = student_id.strip()
+        if not student_id:
+            raise StoreError("missing_identity")
+        question = next((item for item in room.questions if item.id == question_id), None)
+        if question is None:
+            raise StoreError("unknown_question", 404)
+        if student_id in question.upvotes:
+            raise StoreError("already_upvoted")
+        question.upvotes.append(student_id[:80])
+        return question
+
+    def questions_by_votes(self, room_id: str) -> list[Question]:
+        room = self.get(room_id)
+        return sorted(room.questions, key=lambda item: (-len(item.upvotes), item.at, item.id))
+
+    def save_summary_draft(self, room_id: str, text: str) -> str:
+        room = self.get(room_id)
+        room.summary_draft = (text or "").strip()[:20000]
+        return room.summary_draft
+
+    def publish_summary(self, room_id: str, text: str | None) -> str:
+        room = self.get(room_id)
+        if text is None:
+            published = room.summary_draft.strip()
+        else:
+            published = str(text).strip()[:20000]
+            room.summary_draft = published
+        if not published:
+            raise StoreError("missing_summary")
+        room.summary_published = published
+        return published
 
     def add_comment(self, room_id: str, student_id: str, student_name: str, text: str) -> Comment:
         room = self.get(room_id)

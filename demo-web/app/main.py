@@ -99,6 +99,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         room = _room(app, room_id)
         return _room_link(request, room)
 
+    @app.get("/api/rooms/{room_id}/counts")
+    def room_counts(room_id: str):
+        """Headcounts only. No names, ids, tokens, or keys."""
+        room = _room(app, room_id)
+        counts = _attendance_counts(room)
+        return {
+            "title": room.title,
+            "closed": bool(room.closed),
+            "in_class": counts["in_class"],
+            "remote": counts["remote"],
+        }
+
     @app.get("/api/rooms/{room_id}/overview")
     def room_overview(room_id: str, request: Request):
         _require_lecturer(request)
@@ -280,23 +292,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _poll_dict(poll, lecturer=True)
 
     @app.get("/api/rooms/{room_id}/polls")
-    def list_polls(room_id: str, request: Request):
+    def list_polls(room_id: str, request: Request, student_id: str = ""):
         room = _room(app, room_id)
         lecturer = _lecturer_ok(request)
-        return {"polls": [_poll_dict(poll, lecturer=lecturer) for poll in room.polls]}
+        return {
+            "polls": [
+                _poll_dict(poll, lecturer=lecturer, student_id=student_id.strip())
+                for poll in room.polls
+            ]
+        }
 
     @app.post("/api/rooms/{room_id}/polls/{poll_id}/answers")
     async def answer_poll(room_id: str, poll_id: str, request: Request):
         body = await _json(request)
         _open_room(app, room_id)
-        app.state.store.answer_poll(
+        poll = app.state.store.answer_poll(
             room_id,
             poll_id,
             str(body.get("student_id") or ""),
             str(body.get("option") or ""),
             str(body.get("seat_zone") or ""),
         )
-        return {"ok": True}
+        return {
+            "ok": True,
+            "voted_option": str(body.get("option") or ""),
+            "counts": _option_counts(poll),
+        }
 
     @app.post("/api/rooms/{room_id}/comments")
     async def add_comment(room_id: str, request: Request):
@@ -326,6 +347,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for comment in room.comments
             ]
         }
+
+    @app.post("/api/rooms/{room_id}/questions")
+    async def add_question(room_id: str, request: Request):
+        body = await _json(request)
+        _open_room(app, room_id)
+        question = app.state.store.add_question(
+            room_id,
+            str(body.get("student_id") or ""),
+            str(body.get("text") or ""),
+        )
+        return {"id": question.id}
+
+    @app.get("/api/rooms/{room_id}/questions")
+    def list_questions(room_id: str, student_id: str = ""):
+        _room(app, room_id)
+        viewer = student_id.strip()
+        return {
+            "questions": [
+                _question_dict(question, viewer)
+                for question in app.state.store.questions_by_votes(room_id)
+            ]
+        }
+
+    @app.post("/api/rooms/{room_id}/questions/{question_id}/upvote")
+    async def upvote_question(room_id: str, question_id: str, request: Request):
+        body = await _json(request)
+        _open_room(app, room_id)
+        question = app.state.store.upvote_question(
+            room_id,
+            question_id,
+            str(body.get("student_id") or ""),
+        )
+        return {"id": question.id, "votes": len(question.upvotes), "upvoted": True}
+
+    @app.get("/api/rooms/{room_id}/summary")
+    def read_summary(room_id: str, request: Request):
+        room = _room(app, room_id)
+        # Students see the text only after the room is closed and the lecturer published it.
+        visible = room.summary_published if room.closed and room.summary_published else ""
+        payload = {
+            "closed": bool(room.closed),
+            "published": bool(room.summary_published),
+            "text": visible,
+        }
+        if _lecturer_ok(request):
+            payload["draft"] = room.summary_draft
+        return payload
+
+    @app.post("/api/rooms/{room_id}/summary")
+    async def save_summary(room_id: str, request: Request):
+        _require_lecturer(request)
+        body = await _json(request)
+        draft = app.state.store.save_summary_draft(room_id, str(body.get("text") or ""))
+        room = _room(app, room_id)
+        return {"draft": draft, "published": bool(room.summary_published)}
+
+    @app.post("/api/rooms/{room_id}/summary/publish")
+    async def publish_summary(room_id: str, request: Request):
+        _require_lecturer(request)
+        body = await _json(request)
+        published = app.state.store.publish_summary(room_id, body.get("text") if "text" in body else None)
+        return {"published": True, "text": published}
 
     @app.post("/api/rooms/{room_id}/homework")
     async def add_homework(room_id: str, request: Request):
@@ -697,24 +780,45 @@ def _record_dict(record) -> dict:
     }
 
 
-def _poll_dict(poll, lecturer: bool) -> dict:
-    counts: dict[str, int] = {}
-    by_zone: dict[str, dict[str, int]] = {}
+def _option_counts(poll) -> dict[str, int]:
+    counts = {option: 0 for option in poll.options}
     for answer in poll.answers:
-        counts[answer["option"]] = counts.get(answer["option"], 0) + 1
+        if answer["option"] in counts:
+            counts[answer["option"]] += 1
+    return counts
+
+
+def _poll_dict(poll, lecturer: bool, student_id: str = "") -> dict:
+    by_zone: dict[str, dict[str, int]] = {}
+    voted = None
+    for answer in poll.answers:
         zone = by_zone.setdefault(answer["seat_zone"], {})
         zone[answer["option"]] = zone.get(answer["option"], 0) + 1
+        if student_id and answer["student_id"] == student_id:
+            voted = answer
     payload = {
         "id": poll.id,
         "question": poll.question,
         "options": list(poll.options),
         "answer_count": len(poll.answers),
     }
+    if lecturer or voted is not None:
+        payload["counts"] = _option_counts(poll)
+    if voted is not None:
+        payload["voted_option"] = voted["option"]
     if lecturer:
         payload["correct_option"] = poll.correct_option
-        payload["counts"] = counts
         payload["by_zone"] = by_zone
     return payload
+
+
+def _question_dict(question, viewer: str) -> dict:
+    return {
+        "id": question.id,
+        "text": question.text,
+        "votes": len(question.upvotes),
+        "upvoted": bool(viewer) and viewer in question.upvotes,
+    }
 
 
 app = create_app()

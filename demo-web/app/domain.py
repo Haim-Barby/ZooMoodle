@@ -6,10 +6,13 @@ from dataclasses import dataclass, field
 
 SEAT_ZONES = (
     "front-left",
+    "front-center",
     "front-right",
     "middle-left",
+    "middle-center",
     "middle-right",
     "back-left",
+    "back-center",
     "back-right",
 )
 
@@ -63,6 +66,15 @@ class Comment:
     student_id: str
     text: str
     at: float
+
+
+@dataclass
+class Question:
+    id: str
+    student_id: str
+    text: str
+    at: float
+    upvotes: list = field(default_factory=list)
 
 
 @dataclass

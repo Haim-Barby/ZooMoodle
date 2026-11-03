@@ -1,0 +1,7 @@
+fastapi==0.162.0
+uvicorn==0.54.0
+cryptography==50.0.2
+openpyxl==3.1.5
+httpx==0.28.1
+python-multipart==0.0.33
+pytest==9.2.0

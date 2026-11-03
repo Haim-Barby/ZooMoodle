@@ -2,7 +2,14 @@ const tokenInput = document.querySelector("#token");
 const savedToken = sessionStorage.getItem("zoomoodle-lecturer-token") || "";
 if (savedToken) tokenInput.value = savedToken;
 
-const state = { roomId: null, audio: null, playing: false, lastCode: "" };
+const state = {
+  roomId: null,
+  audio: null,
+  playing: false,
+  lastCode: "",
+  llmConfigLoaded: false,
+  llmKeyConfigured: false,
+};
 
 function authHeaders() {
   return { "x-lecturer-token": tokenInput.value.trim() };
@@ -269,6 +276,8 @@ async function reviewHomework(id) {
 document.querySelector("#save-llm").addEventListener("click", async () => {
   try {
     const saved = await api("/api/llm/config", { method: "POST", body: JSON.stringify(llmBody(true)) });
+    state.llmConfigLoaded = true;
+    state.llmKeyConfigured = !!saved.key_configured;
     document.querySelector("#api-key").value = "";
     document.querySelector("#llm-state").textContent =
       "Saved. Key stored: " + (saved.key_configured ? "yes" : "no") + ". Ready: " + saved.ready + ".";
@@ -277,11 +286,27 @@ document.querySelector("#save-llm").addEventListener("click", async () => {
   }
 });
 
+function providerNeedsKey(provider) {
+  return provider !== "ollama" && provider !== "openai_compatible";
+}
+
 document.querySelector("#test-llm").addEventListener("click", async () => {
   const box = document.querySelector("#llm-state");
+  const provider = document.querySelector("#provider").value;
+  const typedKey = document.querySelector("#api-key").value.trim();
+  if (!typedKey && providerNeedsKey(provider) && state.llmConfigLoaded && !state.llmKeyConfigured) {
+    box.textContent = "Enter an API key first.";
+    return;
+  }
   box.textContent = "Testing…";
   try {
     const result = await api("/api/llm/test", { method: "POST", body: JSON.stringify(llmBody(true)) });
+    if (result.category === "missing_key") {
+      state.llmConfigLoaded = true;
+      state.llmKeyConfigured = false;
+      box.textContent = result.message || "Enter an API key first.";
+      return;
+    }
     const bits = [
       result.status,
       result.provider,
@@ -312,6 +337,8 @@ function llmBody(includeKey) {
 async function loadLlm() {
   try {
     const config = await api("/api/llm/config");
+    state.llmConfigLoaded = true;
+    state.llmKeyConfigured = !!config.key_configured;
     if (config.provider) document.querySelector("#provider").value = config.provider;
     if (config.model) document.querySelector("#model").value = config.model;
     if (config.base_url) document.querySelector("#base-url").value = config.base_url;

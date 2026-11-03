@@ -15,7 +15,15 @@ from app.attendance import CheckInError
 from app.config import Settings
 from app.export_svc import ExportService
 from app.llm.agent import AgentError, HomeworkReviewService, SummaryService
-from app.llm.providers import LLMClient, LLMConfig, ProviderFailure, build_provider
+from app.llm.providers import (
+    KEY_OPTIONAL,
+    KNOWN_PROVIDERS,
+    ConnectResult,
+    LLMClient,
+    LLMConfig,
+    ProviderFailure,
+    build_provider,
+)
 from app.net import client_ip, subnet_status
 from app.store import Store, StoreError
 
@@ -24,6 +32,7 @@ NOT_CONFIGURED = (
     "No LLM API key is configured. On the lecturer page, choose a provider, "
     "enter a key, and press Test connection. No model was called."
 )
+MISSING_KEY_MESSAGE = "Enter an API key first."
 EXPORTS = ExportService()
 
 
@@ -360,7 +369,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_lecturer(request)
         body = await _json(request)
         saved = app.state.store.llm
+        provider_name = str(body.get("provider") or saved.provider).strip().lower()
+        model_name = str(body.get("model") or saved.model).strip()
         api_key = str(body.get("api_key") or "").strip() or saved.api_key
+        if provider_name in KNOWN_PROVIDERS and provider_name not in KEY_OPTIONAL and not api_key:
+            return ConnectResult(
+                status="error",
+                provider=provider_name,
+                model=model_name,
+                latency_ms=None,
+                tool_calling="not_checked",
+                category="missing_key",
+                message=MISSING_KEY_MESSAGE,
+            ).as_dict()
         config = LLMConfig(
             provider=str(body.get("provider") or saved.provider),
             model=str(body.get("model") or saved.model),
@@ -372,8 +393,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             client = LLMClient(_make_provider(app, config))
             result = client.test_connection()
         except ProviderFailure as exc:
-            from app.llm.providers import ConnectResult
-
             result = ConnectResult(
                 status="error",
                 provider=config.provider.strip().lower(),

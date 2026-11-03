@@ -5,7 +5,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from app.llm.providers import LLMResponse, ToolCall
-from app.main import NOT_CONFIGURED, create_app
+from app.main import MISSING_KEY_MESSAGE, NOT_CONFIGURED, create_app
 from tests.conftest import make_device, make_settings
 
 TOKEN = "lecturer-test-token"
@@ -117,6 +117,47 @@ def test_llm_config_never_returns_the_key_and_test_classifies_errors():
     )
     assert unknown.json()["category"] == "unknown_provider"
     assert SECRET not in unknown.text
+
+
+def test_llm_test_without_a_key_does_not_call_the_provider():
+    application, client = _app()
+    called = {"n": 0}
+
+    def handler(_request):
+        called["n"] += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": "pong"}}]})
+
+    application.state.http_transport = httpx.MockTransport(handler)
+    for provider in ("openai", "anthropic", "gemini", "xai"):
+        tested = client.post(
+            "/api/llm/test",
+            headers=_auth(),
+            json={"provider": provider, "model": "test-model", "api_key": "   "},
+        )
+        body = tested.json()
+        assert tested.status_code == 200
+        assert body["status"] == "error"
+        assert body["category"] == "missing_key"
+        assert body["latency_ms"] is None
+        assert body["message"] == MISSING_KEY_MESSAGE
+        assert "ms" not in body["message"]
+    assert called["n"] == 0
+
+    ollama = client.post(
+        "/api/llm/test",
+        headers=_auth(),
+        json={"provider": "ollama", "model": "llama"},
+    )
+    assert called["n"] == 1
+    assert ollama.json()["category"] != "missing_key"
+
+    compatible = client.post(
+        "/api/llm/test",
+        headers=_auth(),
+        json={"provider": "openai_compatible", "model": "local"},
+    )
+    assert compatible.json()["category"] == "invalid_request"
+    assert called["n"] == 1
 
 
 def test_summary_without_a_key_does_not_invent_output():

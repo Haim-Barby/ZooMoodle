@@ -21,10 +21,30 @@ roomInput.value = params.get("room") || sessionStorage.getItem("zoomoodle-room")
 document.querySelector("#name").value = sessionStorage.getItem("zoomoodle-name") || "";
 document.querySelector("#sid").value = sessionStorage.getItem("zoomoodle-sid") || "";
 
-const listen = { context: null, processor: null, stream: null, chunks: [], checking: false, homeworkId: null };
+const listen = { context: null, processor: null, stream: null, chunks: [], checking: false, homeworkId: null, scanner: null };
+const flow = { step: "join", mode: "", attendanceId: "", band: "ultrasonic", proof: "both" };
+
+function showStep(name) {
+  ["join", "mode", "class", "lesson"].forEach((step) => {
+    const node = document.querySelector("#step-" + step);
+    if (node) node.hidden = step !== name;
+  });
+  flow.step = name;
+}
+
+function saveFlow() {
+  sessionStorage.setItem("zoomoodle-student-flow", JSON.stringify({
+    step: flow.step,
+    mode: flow.mode,
+    attendanceId: flow.attendanceId,
+    band: flow.band,
+    proof: flow.proof,
+    room: roomInput.value.trim(),
+  }));
+}
 
 function identity() {
-  const studentId = document.querySelector("#sid").value.trim();
+  const studentId = document.querySelector("#sid").value.trim() || flow.attendanceId;
   const studentName = document.querySelector("#name").value.trim();
   const room = roomInput.value.trim();
   sessionStorage.setItem("zoomoodle-sid", studentId);
@@ -154,21 +174,57 @@ async function checkIn(mode, tokenCode) {
   }
   const extra = body.external_token ? " Remote token: " + body.external_token : "";
   const flags = body.flags && body.flags.length ? " Flags: " + body.flags.join(", ") : "";
-  setResult("Checked in (" + body.mode + "), confidence " + body.confidence + "." + flags + extra, true);
+  const issued = body.attendance_id ? " Server id " + body.attendance_id + "." : "";
+  setResult("Checked in (" + body.mode + "), confidence " + body.confidence + "." + flags + extra + issued, true);
+  if (body.attendance_id) enterLesson("in_class", body.attendance_id);
 }
 
 document.querySelector("#typed").addEventListener("click", () => {
   checkIn("in_class", document.querySelector("#code").value.trim()).catch((err) => setResult(err.message, false));
 });
 
-document.querySelector("#remote").addEventListener("click", () => {
-  checkIn("remote", null).catch((err) => setResult(err.message, false));
+document.querySelector("#join-continue").addEventListener("click", async () => {
+  const room = roomInput.value.trim();
+  const note = document.querySelector("#join-status");
+  if (!room) {
+    note.textContent = "Enter the room code.";
+    return;
+  }
+  const response = await fetch("/api/rooms/" + encodeURIComponent(room));
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    note.textContent = explain(body.error, "That room was not found.");
+    return;
+  }
+  flow.band = body.audio_band || "ultrasonic";
+  flow.proof = body.proof || "both";
+  sessionStorage.setItem("zoomoodle-room", room);
+  document.querySelector("#mode-room").textContent = "Room " + body.id + (body.title ? " · " + body.title : "");
+  showStep("mode");
+  saveFlow();
+});
+
+document.querySelector("#choose-class").addEventListener("click", () => {
+  showStep("class");
+  saveFlow();
+});
+
+document.querySelector("#remote").addEventListener("click", async () => {
+  const room = roomInput.value.trim();
+  const response = await fetch("/api/rooms/" + encodeURIComponent(room) + "/remote-join", { method: "POST" });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    document.querySelector("#join-status").textContent = explain(body.error, "Could not join remotely.");
+    return;
+  }
+  enterLesson("remote", body.marker);
 });
 
 document.querySelector("#listen").addEventListener("click", async () => {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     listen.context = listen.context || new Ctx();
+    if (listen.context.state === "suspended") await listen.context.resume();
     listen.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
     });
@@ -186,10 +242,11 @@ document.querySelector("#listen").addEventListener("click", async () => {
         total -= listen.chunks.shift().length;
       }
       const latest = input;
-      const power = ZooFSK.goertzel(latest, 0, latest.length, 18500, rate);
+      const band = ZooFSK.bandOf(flow.band);
+      const power = ZooFSK.goertzel(latest, 0, latest.length, (band.f0 + band.f1) / 2, rate);
       const width = Math.max(0, Math.min(100, Math.log10(power + 1) * 8));
       document.querySelector("#level").style.width = width + "%";
-      document.querySelector("#level-text").textContent = "Listening at " + rate + " Hz. Ultrasound energy indicator: " + Math.round(width);
+      document.querySelector("#level-text").textContent = "Listening… " + rate + " Hz, " + band.label;
       if (listen.checking) return;
       const merged = new Float32Array(total);
       let offset = 0;
@@ -197,7 +254,13 @@ document.querySelector("#listen").addEventListener("click", async () => {
         merged.set(chunk, offset);
         offset += chunk.length;
       });
-      const decoded = ZooFSK.decode(merged, rate);
+      const report = ZooFSK.inspect(merged, rate, flow.band);
+      document.querySelector("#tone-diagnostics").textContent =
+        "Listening… " + Math.round(band.f0) + " Hz " + Math.round(report.power0) +
+        " · " + Math.round(band.f1) + " Hz " + Math.round(report.power1) +
+        " · preamble " + (report.preamble < 0 ? 0 : report.preamble) +
+        (report.bits ? " · bits " + report.bits.slice(0, 24) : "");
+      const decoded = report.bytes;
       if (decoded) {
         listen.checking = true;
         const code = ZooFSK.base32(decoded);
@@ -311,6 +374,63 @@ function escapeHtml(value) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
   }[ch]));
 }
+
+function enterLesson(mode, attendanceId) {
+  flow.mode = mode;
+  flow.attendanceId = attendanceId || "";
+  document.querySelector("#attendance-id").textContent = flow.attendanceId || "—";
+  document.querySelector("#lesson-status").textContent = mode === "remote"
+    ? "You are remote. This marker means you are not checked in as being in class."
+    : "You are in class. The attendance id below came from the server.";
+  const zonesNode = document.querySelector("#zones");
+  const holder = document.querySelector("#lesson-zones");
+  if (zonesNode && holder && zonesNode.parentElement !== holder) holder.appendChild(zonesNode);
+  showStep("lesson");
+  saveFlow();
+}
+
+document.querySelector("#scan").addEventListener("click", async () => {
+  if (!("BarcodeDetector" in window)) {
+    setResult("This browser cannot scan a QR code. Type the short code instead.", false);
+    return;
+  }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    listen.context = listen.context || new Ctx();
+    if (listen.context.state === "suspended") await listen.context.resume();
+    listen.scanner = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    const video = document.querySelector("#scanner");
+    video.srcObject = listen.scanner;
+    video.hidden = false;
+    const detector = new BarcodeDetector({ formats: ["qr_code"] });
+    const timer = window.setInterval(async () => {
+      const codes = await detector.detect(video);
+      if (!codes.length) return;
+      window.clearInterval(timer);
+      const raw = codes[0].rawValue || "";
+      const found = raw.match(/[A-Z2-7]{8,}/);
+      document.querySelector("#code").value = found ? found[0] : raw.trim();
+      listen.scanner.getTracks().forEach((track) => track.stop());
+      video.hidden = true;
+      checkIn("in_class", document.querySelector("#code").value.trim()).catch((err) => setResult(err.message, false));
+    }, 400);
+  } catch (err) {
+    setResult(err.message, false);
+  }
+});
+
+(function restoreFlow() {
+  if (params.get("code")) document.querySelector("#code").value = params.get("code");
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem("zoomoodle-student-flow") || "null"); } catch (_err) { saved = null; }
+  const urlRoom = params.get("room") || "";
+  if (!saved || (urlRoom && saved.room && saved.room !== urlRoom)) return;
+  if (saved.room) roomInput.value = saved.room;
+  flow.band = saved.band || flow.band;
+  flow.proof = saved.proof || flow.proof;
+  if (saved.step === "lesson" && saved.attendanceId) enterLesson(saved.mode || "in_class", saved.attendanceId);
+  else if (saved.step === "class" || saved.step === "mode") showStep(saved.step);
+}());
 
 loadPoll();
 setInterval(() => loadPoll().catch(() => {}), 4000);

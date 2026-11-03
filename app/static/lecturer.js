@@ -44,7 +44,7 @@ const ROOM_KEY = "zoomoodle-lecturer-room";
 function showRoom(room) {
   state.roomId = room.id;
   sessionStorage.setItem(ROOM_KEY, room.id);
-  const path = room.student_path || ("/student?room=" + room.id);
+  const path = room.student_url || room.student_path || ("/student?room=" + room.id);
   const link = new URL(path, window.location.origin).href;
   document.querySelector("#room-info").innerHTML =
     "Room <strong>" + room.id + "</strong>. Student link: <a href=\"" + link + "\">" + link + "</a>";

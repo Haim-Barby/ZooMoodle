@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import hmac
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -66,12 +68,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_lecturer(request)
         body = await _json(request)
         room = app.state.store.create_room(str(body.get("title") or ""))
-        return {"id": room.id, "title": room.title, "student_path": f"/student?room={room.id}"}
+        return _room_link(request, room)
 
     @app.get("/api/rooms/{room_id}")
-    def public_room(room_id: str):
+    def public_room(room_id: str, request: Request):
         room = _room(app, room_id)
-        return {"id": room.id, "title": room.title}
+        return _room_link(request, room)
 
     @app.get("/api/rooms/{room_id}/token")
     def current_token(room_id: str, request: Request):
@@ -445,6 +447,33 @@ def _require_lecturer(request: Request) -> None:
 
 def _room(app: FastAPI, room_id: str):
     return app.state.store.get(room_id)
+
+
+_ORIGIN = re.compile(r"^https?://[A-Za-z0-9._:-]+(?::\d+)?$")
+
+
+def _public_origin(request: Request) -> str:
+    """Origin the lecturer should hand to phones.
+
+    Render sets RENDER_EXTERNAL_URL. ZOOMODLE_PUBLIC_ORIGIN overrides it.
+    Otherwise use the request URL after uvicorn has applied X-Forwarded-Proto
+    from a trusted proxy (FORWARDED_ALLOW_IPS on Render).
+    """
+    for name in ("ZOOMODLE_PUBLIC_ORIGIN", "RENDER_EXTERNAL_URL"):
+        raw = os.environ.get(name, "").strip().rstrip("/")
+        if _ORIGIN.match(raw):
+            return raw
+    return str(request.base_url).rstrip("/")
+
+
+def _room_link(request: Request, room) -> dict:
+    path = f"/student?room={room.id}"
+    return {
+        "id": room.id,
+        "title": room.title,
+        "student_path": path,
+        "student_url": _public_origin(request) + path,
+    }
 
 
 def _llm_ready(config: LLMConfig) -> bool:

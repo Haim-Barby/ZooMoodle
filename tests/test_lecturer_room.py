@@ -18,10 +18,42 @@ def test_public_room_payload_is_what_the_lecturer_page_restores():
     ).json()
     fetched = client.get(f"/api/rooms/{created['id']}")
     assert fetched.status_code == 200
-    assert fetched.json() == {"id": created["id"], "title": "Graphs"}
+    assert fetched.json() == {
+        "id": created["id"],
+        "title": "Graphs",
+        "student_path": f"/student?room={created['id']}",
+        "student_url": f"http://testserver/student?room={created['id']}",
+    }
+    assert created["student_url"] == fetched.json()["student_url"]
     missing = client.get("/api/rooms/missing")
     assert missing.status_code == 404
     assert missing.json()["error"] == "unknown_room"
+
+
+def test_student_url_prefers_the_render_public_origin(monkeypatch):
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://zoomoodle-demo.onrender.com/")
+    client = TestClient(create_app(make_settings()))
+    created = client.post(
+        "/api/rooms",
+        headers={"x-lecturer-token": TOKEN},
+        json={"title": "Graphs"},
+    ).json()
+    assert created["student_path"] == f"/student?room={created['id']}"
+    assert created["student_url"] == f"https://zoomoodle-demo.onrender.com/student?room={created['id']}"
+    monkeypatch.setenv("ZOOMODLE_PUBLIC_ORIGIN", "https://class.example:8443")
+    again = client.post(
+        "/api/rooms",
+        headers={"x-lecturer-token": TOKEN},
+        json={"title": "Graphs"},
+    ).json()
+    assert again["student_url"] == f"https://class.example:8443/student?room={again['id']}"
+    monkeypatch.setenv("ZOOMODLE_PUBLIC_ORIGIN", "javascript:alert(1)")
+    ignored = client.post(
+        "/api/rooms",
+        headers={"x-lecturer-token": TOKEN},
+        json={"title": "Graphs"},
+    ).json()
+    assert ignored["student_url"].startswith("https://zoomoodle-demo.onrender.com/student?room=")
 
 
 def test_unlock_loads_saved_model_settings_without_a_reload():
@@ -38,5 +70,6 @@ def test_lecturer_script_restores_the_saved_room_or_drops_it():
     assert 'const ROOM_KEY = "zoomoodle-lecturer-room"' in script
     assert "sessionStorage.getItem(ROOM_KEY)" in script
     assert "sessionStorage.setItem(ROOM_KEY, room.id)" in script
+    assert "room.student_url || room.student_path" in script
     assert 'err.message === "unknown_room"' in script
     assert "restoreRoom()" in script

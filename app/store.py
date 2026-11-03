@@ -37,6 +37,7 @@ class Room:
         self.transcript = ""
         self.attention = AttentionAggregator()
         self.names: dict[str, str] = {}
+        self.closed = False
 
 
 class Store:
@@ -70,6 +71,11 @@ class Store:
             AttendanceService(self.tokens, self.settings.challenge_max_age_seconds),
         )
         self.rooms[room_id] = room
+        return room
+
+    def close_room(self, room_id: str) -> Room:
+        room = self.get(room_id)
+        room.closed = True
         return room
 
     def get(self, room_id: str) -> Room:

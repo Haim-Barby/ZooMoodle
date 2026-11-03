@@ -21,6 +21,7 @@ def test_public_room_payload_is_what_the_lecturer_page_restores():
     assert fetched.json() == {
         "id": created["id"],
         "title": "Graphs",
+        "closed": False,
         "student_path": f"/student?room={created['id']}",
         "student_url": f"http://testserver/student?room={created['id']}",
     }

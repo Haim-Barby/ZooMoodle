@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import os
 import re
@@ -30,6 +31,17 @@ from app.net import client_ip, subnet_status
 from app.store import Store, StoreError
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+DIAGRAM_DIR = Path(__file__).resolve().parents[1] / "docs" / "diagrams"
+DIAGRAM_TITLES = {
+    "classes": "Class diagram",
+    "components": "Components",
+    "seq-agent": "Sequence: lesson agent",
+    "seq-checkin": "Sequence: acoustic check-in",
+    "seq-export": "Sequence: attendance export",
+    "seq-llm-test": "Sequence: model connection",
+    "seq-poll": "Sequence: poll",
+    "seq-remote": "Sequence: remote join",
+}
 NOT_CONFIGURED = (
     "No LLM API key is configured. On the lecturer page, choose a provider, "
     "enter a key, and press Test connection. No model was called."
@@ -75,6 +87,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         room = _room(app, room_id)
         return _room_link(request, room)
 
+    @app.get("/api/rooms/{room_id}/overview")
+    def room_overview(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        store = app.state.store
+        token = store.current_token(room_id)
+        now = store.tokens.now()
+        window_end = (token.window + 1) * store.tokens.window_seconds
+        return {
+            "id": room.id,
+            "title": room.title,
+            "closed": room.closed,
+            "student_path": f"/student?room={room.id}",
+            "student_url": _public_origin(request) + f"/student?room={room.id}",
+            "key_fingerprint": _fingerprint(room.key),
+            "salt_fingerprint": _fingerprint(room.salt),
+            "counts": _attendance_counts(room),
+            "token": {
+                "code": token.code,
+                "window": token.window,
+                "seconds_left": round(max(0.0, window_end - now), 2),
+                "window_seconds": store.tokens.window_seconds,
+            },
+        }
+
+    @app.post("/api/rooms/{room_id}/close")
+    def close_room(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = app.state.store.close_room(room_id)
+        return {"id": room.id, "closed": True}
+
+    @app.get("/api/diagrams")
+    def diagrams():
+        return {"diagrams": _diagram_entries()}
+
     @app.get("/api/rooms/{room_id}/token")
     def current_token(room_id: str, request: Request):
         _require_lecturer(request)
@@ -93,7 +140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/rooms/{room_id}/challenge")
     async def challenge(room_id: str, request: Request):
         body = await _json(request)
-        room = _room(app, room_id)
+        room = _open_room(app, room_id)
         try:
             opened = room.attendance.open_challenge(
                 str(body.get("student_id") or ""),
@@ -108,7 +155,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/rooms/{room_id}/checkin")
     async def checkin(room_id: str, request: Request):
         body = await _json(request)
-        room = _room(app, room_id)
+        room = _open_room(app, room_id)
         try:
             signature = _decode_signature(str(body.get("signature") or ""))
         except Exception as exc:
@@ -201,6 +248,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/rooms/{room_id}/polls/{poll_id}/answers")
     async def answer_poll(room_id: str, poll_id: str, request: Request):
         body = await _json(request)
+        _open_room(app, room_id)
         app.state.store.answer_poll(
             room_id,
             poll_id,
@@ -213,6 +261,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/rooms/{room_id}/comments")
     async def add_comment(room_id: str, request: Request):
         body = await _json(request)
+        _open_room(app, room_id)
         comment = app.state.store.add_comment(
             room_id,
             str(body.get("student_id") or ""),
@@ -241,6 +290,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/rooms/{room_id}/homework")
     async def add_homework(room_id: str, request: Request):
         body = await _json(request)
+        _open_room(app, room_id)
         item = app.state.store.add_homework(
             room_id,
             str(body.get("student_id") or ""),
@@ -295,7 +345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise StoreError("audience must be student or lecturer.", 400)
         _require_llm(app)
         submission_id = str(body.get("submission_id") or "")
-        room = _room(app, room_id)
+        room = _open_room(app, room_id) if audience == "student" else _room(app, room_id)
         if not any(item.id == submission_id for item in room.homework):
             raise StoreError("unknown_submission", 404)
         snapshot, names, student_ids = app.state.store.snapshot(room_id)
@@ -415,6 +465,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(status_code=exc.status, content={"error": exc.reason})
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    if DIAGRAM_DIR.is_dir():
+        app.mount("/diagrams", StaticFiles(directory=DIAGRAM_DIR), name="diagrams")
     return app
 
 
@@ -450,6 +502,36 @@ def _room(app: FastAPI, room_id: str):
     return app.state.store.get(room_id)
 
 
+def _open_room(app: FastAPI, room_id: str):
+    room = _room(app, room_id)
+    if room.closed:
+        raise StoreError("room_closed", 409)
+    return room
+
+
+def _fingerprint(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()[:12]
+
+
+def _attendance_counts(room) -> dict:
+    records = room.attendance.records
+    return {
+        "in_class": sum(1 for record in records if record.mode == "in_class"),
+        "remote": sum(1 for record in records if record.mode == "remote"),
+        "flagged": sum(1 for record in records if record.flags),
+    }
+
+
+def _diagram_entries() -> list[dict]:
+    if not DIAGRAM_DIR.is_dir():
+        return []
+    entries = []
+    for path in sorted(DIAGRAM_DIR.glob("*.svg")):
+        title = DIAGRAM_TITLES.get(path.stem) or path.stem.replace("-", " ").capitalize()
+        entries.append({"file": path.name, "title": title, "src": f"/diagrams/{path.name}"})
+    return entries
+
+
 _ORIGIN = re.compile(r"^https?://[A-Za-z0-9._:-]+(?::\d+)?$")
 
 
@@ -472,6 +554,7 @@ def _room_link(request: Request, room) -> dict:
     return {
         "id": room.id,
         "title": room.title,
+        "closed": bool(room.closed),
         "student_path": path,
         "student_url": _public_origin(request) + path,
     }

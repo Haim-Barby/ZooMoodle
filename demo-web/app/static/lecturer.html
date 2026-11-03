@@ -37,7 +37,7 @@
         <button class="nav-item" type="button" data-tab="attendance">Attendance</button>
         <button class="nav-item" type="button" data-tab="beacon">Sound beacon</button>
         <button class="nav-item" type="button" data-tab="polls">Polls</button>
-        <button class="nav-item" type="button" data-tab="comments">Comments</button>
+        <button class="nav-item" type="button" data-tab="questions">Questions</button>
         <button class="nav-item" type="button" data-tab="attention">Attention</button>
         <button class="nav-item" type="button" data-tab="agent">AI agent</button>
         <button class="nav-item" type="button" data-tab="architecture">Architecture</button>
@@ -154,10 +154,11 @@ Confidentiality</textarea>
         </article>
       </section>
 
-      <section class="panel" data-panel="comments" hidden>
+      <section class="panel" data-panel="questions" hidden>
         <article class="card">
-          <h2>Comments</h2>
-          <div id="comments" class="note">None yet.</div>
+          <h2>Questions</h2>
+          <p class="note">Sorted by votes. Students are not named. This list is for reading during class.</p>
+          <div id="question-list" class="note">No questions yet.</div>
         </article>
       </section>
 
@@ -206,9 +207,16 @@ Confidentiality</textarea>
         </article>
         <article class="card">
           <h2>Lesson summary</h2>
+          <p class="note">Students see this only after you close the room and publish it. Run the agent and edit the draft, or write the summary yourself when no model key is set.</p>
           <input id="transcript" type="file" accept=".txt,.vtt,.srt,.md,text/plain">
-          <button id="summarize" type="button">Run lesson summary</button>
-          <pre id="summary">No summary yet.</pre>
+          <label for="summary-draft">Summary</label>
+          <textarea id="summary-draft" placeholder="Write a summary, or run the agent and edit the draft here."></textarea>
+          <div class="row">
+            <button id="summarize" type="button">Run lesson summary</button>
+            <button id="publish-summary" class="secondary" type="button">Publish to students</button>
+          </div>
+          <p id="summary-state" class="note" role="status"></p>
+          <pre id="summary" hidden></pre>
         </article>
         <article class="card">
           <h2>Homework</h2>

@@ -113,6 +113,19 @@ function showRoom(room) {
   qr.innerHTML = svg;
   qr.hidden = !svg;
   document.querySelector("#live-pill").textContent = room.closed ? "Closed" : "Live";
+  loadSummaryEditor().catch(() => {});
+}
+
+async function loadSummaryEditor() {
+  if (!state.roomId) return;
+  const body = await api("/api/rooms/" + state.roomId + "/summary");
+  const box = document.querySelector("#summary-draft");
+  if (box && !box.value.trim()) box.value = body.draft || "";
+  const note = document.querySelector("#summary-state");
+  if (!note) return;
+  if (body.published && body.closed) note.textContent = "Published. Students can read it now.";
+  else if (body.published) note.textContent = "Published. Students see it after you close the room.";
+  else if (body.draft) note.textContent = "Draft saved. Students cannot read it yet.";
 }
 
 const PROOF_TEXT = { both: "sound or rotating QR", sound: "sound only", qr: "rotating QR only" };
@@ -468,12 +481,14 @@ async function refreshSheet() {
   if (!state.roomId) return;
   const body = await api("/api/rooms/" + state.roomId + "/attendance");
   renderSheet(body.records || []);
-  const comments = await api("/api/rooms/" + state.roomId + "/comments");
+  const questions = await api("/api/rooms/" + state.roomId + "/questions");
   const polls = await api("/api/rooms/" + state.roomId + "/polls");
   const homework = await api("/api/rooms/" + state.roomId + "/homework");
-  document.querySelector("#comments").innerHTML = (comments.comments || []).length
-    ? (comments.comments || []).map((item) => "<p><strong>" + escapeHtml(item.name || item.student_id) + ":</strong> " + escapeHtml(item.text) + "</p>").join("")
-    : "None yet.";
+  const list = document.querySelector("#question-list");
+  const items = questions.questions || [];
+  list.innerHTML = items.length
+    ? items.map((item) => "<p><strong>" + item.votes + "</strong> · " + escapeHtml(item.text) + "</p>").join("")
+    : "No questions yet.";
   document.querySelector("#polls").innerHTML = (polls.polls || []).map((poll) => {
     return "<p><strong>" + escapeHtml(poll.question) + "</strong> (" + poll.answer_count + " answers)</p><pre>" +
       escapeHtml(JSON.stringify({ counts: poll.counts, by_zone: poll.by_zone, correct_option: poll.correct_option }, null, 2)) + "</pre>";
@@ -526,8 +541,35 @@ document.querySelector("#add-poll").addEventListener("click", async () => {
   }
 });
 
+function readableSummary(payload) {
+  const report = payload && payload.report ? payload.report : payload;
+  if (!report || typeof report !== "object") return "";
+  const lines = [];
+  const topics = Array.isArray(report.topics) ? report.topics : [];
+  if (topics.length) {
+    lines.push("Topics");
+    topics.forEach((topic) => {
+      if (typeof topic === "string") lines.push("- " + topic);
+      else if (topic && topic.title) lines.push("- " + topic.title);
+    });
+  }
+  const findings = Array.isArray(report.zone_findings) ? report.zone_findings : [];
+  if (findings.length) {
+    lines.push("", "Seat zones");
+    findings.forEach((item) => lines.push("- " + (typeof item === "string" ? item : JSON.stringify(item))));
+  }
+  const recommendations = Array.isArray(report.recommendations) ? report.recommendations : [];
+  if (recommendations.length) {
+    lines.push("", "Next lesson");
+    recommendations.forEach((item) => lines.push("- " + item));
+  }
+  if (!lines.length) return JSON.stringify(report, null, 2);
+  return lines.join("\n");
+}
+
 document.querySelector("#summarize").addEventListener("click", async () => {
   const out = document.querySelector("#summary");
+  const note = document.querySelector("#summary-state");
   try {
     const file = document.querySelector("#transcript").files[0];
     if (!file) throw new Error("Choose a transcript file first.");
@@ -536,17 +578,58 @@ document.querySelector("#summarize").addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify({ transcript: transcript }),
     });
+    out.hidden = false;
     out.textContent = "Running the agent…";
+    note.textContent = "Running the agent…";
     const report = await api("/api/rooms/" + state.roomId + "/agent/summary", { method: "POST", body: "{}" });
     out.textContent = JSON.stringify(report, null, 2);
+    const text = readableSummary(report);
+    document.querySelector("#summary-draft").value = text;
+    await api("/api/rooms/" + state.roomId + "/summary", {
+      method: "POST",
+      body: JSON.stringify({ text: text }),
+    });
+    note.textContent = "Draft ready. Edit it, then publish. Students cannot read it yet.";
   } catch (err) {
     out.textContent = err.message;
+    note.textContent = err.message;
   }
+});
+
+document.querySelector("#publish-summary").addEventListener("click", async () => {
+  const note = document.querySelector("#summary-state");
+  try {
+    if (!state.roomId) throw new Error("Open a room first.");
+    const text = document.querySelector("#summary-draft").value;
+    await api("/api/rooms/" + state.roomId + "/summary/publish", {
+      method: "POST",
+      body: JSON.stringify({ text: text }),
+    });
+    note.textContent = state.closed
+      ? "Published. Students can read it now."
+      : "Published. Students see it after you close the room.";
+  } catch (err) {
+    note.textContent = err.message === "missing_summary"
+      ? "Write a summary before publishing."
+      : err.message;
+  }
+});
+
+document.querySelector("#summary-draft").addEventListener("blur", () => {
+  if (!state.roomId) return;
+  api("/api/rooms/" + state.roomId + "/summary", {
+    method: "POST",
+    body: JSON.stringify({ text: document.querySelector("#summary-draft").value }),
+  }).catch(() => {});
 });
 
 function renderAttention(body) {
   document.querySelector("#attention").textContent = JSON.stringify(body, null, 2);
-  const zones = ["front-left", "front-right", "middle-left", "middle-right", "back-left", "back-right"];
+  const zones = [
+    "front-left", "front-center", "front-right",
+    "middle-left", "middle-center", "middle-right",
+    "back-left", "back-center", "back-right",
+  ];
   const map = body.zones || {};
   document.querySelector("#attention-map").innerHTML = zones.map((zone) => {
     const item = map[zone];
@@ -605,6 +688,7 @@ document.querySelector("#camera-toggle").addEventListener("change", async (event
 async function reviewHomework(id) {
   const out = document.querySelector("#summary");
   try {
+    out.hidden = false;
     out.textContent = "Running the homework agent…";
     const report = await api("/api/rooms/" + state.roomId + "/agent/homework", {
       method: "POST",

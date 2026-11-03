@@ -32,6 +32,8 @@ from app.store import Store, StoreError
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DIAGRAM_DIR = Path(__file__).resolve().parents[1] / "docs" / "diagrams"
+AUDIO_BANDS = ("ultrasonic", "near", "audible")
+PROOF_METHODS = ("sound", "qr", "both")
 DIAGRAM_TITLES = {
     "classes": "Class diagram",
     "components": "Components",
@@ -103,6 +105,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "id": room.id,
             "title": room.title,
             "closed": room.closed,
+            "audio_band": room.audio_band,
+            "proof": room.proof,
             "student_path": f"/student?room={room.id}",
             "student_url": _public_origin(request) + f"/student?room={room.id}",
             "key_fingerprint": _fingerprint(room.key),
@@ -115,6 +119,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "window_seconds": store.tokens.window_seconds,
             },
         }
+
+    @app.post("/api/rooms/{room_id}/remote-join")
+    def remote_join(room_id: str):
+        room = _open_room(app, room_id)
+        record = room.attendance.mark_remote(room.attendance.tokens.now())
+        return {"mode": "remote", "marker": record.attendance_id}
+
+    @app.post("/api/rooms/{room_id}/lesson-settings")
+    async def lesson_settings(room_id: str, request: Request):
+        _require_lecturer(request)
+        body = await _json(request)
+        room = _room(app, room_id)
+        band = body.get("audio_band")
+        proof = body.get("proof")
+        if band is not None:
+            if band not in AUDIO_BANDS:
+                raise StoreError("bad_band", 400)
+            room.audio_band = band
+        if proof is not None:
+            if proof not in PROOF_METHODS:
+                raise StoreError("bad_proof", 400)
+            room.proof = proof
+        return {"audio_band": room.audio_band, "proof": room.proof}
 
     @app.post("/api/rooms/{room_id}/close")
     def close_room(room_id: str, request: Request):
@@ -201,6 +228,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         if record.external_token:
             payload["external_token"] = record.external_token
+        if record.attendance_id:
+            payload["attendance_id"] = record.attendance_id
         return payload
 
     @app.get("/api/rooms/{room_id}/attendance")
@@ -563,6 +592,8 @@ def _room_link(request: Request, room) -> dict:
         "id": room.id,
         "title": room.title,
         "closed": bool(room.closed),
+        "audio_band": room.audio_band,
+        "proof": room.proof,
         "student_path": path,
         "student_url": _public_origin(request) + path,
     }
@@ -654,6 +685,8 @@ def _record_dict(record) -> dict:
         "confidence": record.confidence,
         "flags": list(record.flags),
         "subnet": record.subnet,
+        "attendance_id": record.attendance_id,
+        "external_token": record.external_token or "",
     }
 
 

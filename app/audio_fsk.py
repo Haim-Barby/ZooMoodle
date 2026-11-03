@@ -17,6 +17,12 @@ BIT_SECONDS = 0.02
 PREAMBLE = (1, 1, 1, 1, 0, 0, 1, 0)
 PAYLOAD_BYTES = 6
 AMPLITUDE = 0.5
+# name -> (mark0 Hz, mark1 Hz, seconds per bit). The HMAC payload is unchanged.
+BANDS = {
+    "ultrasonic": (18000.0, 19000.0, 0.04),
+    "near": (17000.0, 17600.0, 0.04),
+    "audible": (4200.0, 5600.0, 0.05),
+}
 
 
 def bytes_to_bits(data: bytes) -> list[int]:
@@ -44,17 +50,21 @@ def encode_pcm(
     sample_rate: int = 48000,
     lead_seconds: float = 0.0,
     amplitude: float = AMPLITUDE,
+    freq0: float = FREQ_0,
+    freq1: float = FREQ_1,
+    bit_seconds: float = BIT_SECONDS,
+    repeats: int = 1,
 ) -> list[float]:
     if len(payload) != PAYLOAD_BYTES:
         raise ValueError(f"payload must be {PAYLOAD_BYTES} bytes")
-    if sample_rate < 40000:
-        raise ValueError("sample rate must be at least 40000 to carry 19 kHz")
-    bits = list(PREAMBLE) + bytes_to_bits(payload)
-    bit_n = int(round(BIT_SECONDS * sample_rate))
+    if freq1 >= sample_rate / 2.2:
+        raise ValueError("sample rate is too low for this band")
+    bits = (list(PREAMBLE) + bytes_to_bits(payload)) * max(1, repeats)
+    bit_n = int(round(bit_seconds * sample_rate))
     samples = [0.0] * int(round(lead_seconds * sample_rate))
     phase = 0.0
     for bit in bits:
-        freq = FREQ_1 if bit else FREQ_0
+        freq = freq1 if bit else freq0
         step = 2.0 * math.pi * freq / sample_rate
         for _ in range(bit_n):
             samples.append(amplitude * math.sin(phase))
@@ -78,15 +88,26 @@ def goertzel_power(samples: list[float], freq: float, sample_rate: int) -> float
     return s1 * s1 + s2 * s2 - coeff * s1 * s2
 
 
-def _bit_power(chunk: list[float], sample_rate: int) -> tuple[int, float]:
-    power0 = goertzel_power(chunk, FREQ_0, sample_rate)
-    power1 = goertzel_power(chunk, FREQ_1, sample_rate)
+def _bit_power(chunk: list[float], sample_rate: int, freq0: float = FREQ_0, freq1: float = FREQ_1) -> tuple[int, float]:
+    power0 = goertzel_power(chunk, freq0, sample_rate)
+    power1 = goertzel_power(chunk, freq1, sample_rate)
+    strong = max(power0, power1)
+    weak = min(power0, power1)
+    # The louder tone must win by a margin so a voice-band residue does not decode.
+    if strong < weak * 1.5:
+        return 0 if power0 >= power1 else 1, strong
     bit = 1 if power1 > power0 else 0
-    return bit, max(power0, power1)
+    return bit, strong
 
 
-def decode_pcm(samples: list[float], sample_rate: int = 48000) -> bytes | None:
-    bit_n = int(round(BIT_SECONDS * sample_rate))
+def decode_pcm(
+    samples: list[float],
+    sample_rate: int = 48000,
+    freq0: float = FREQ_0,
+    freq1: float = FREQ_1,
+    bit_seconds: float = BIT_SECONDS,
+) -> bytes | None:
+    bit_n = int(round(bit_seconds * sample_rate))
     if bit_n <= 0:
         return None
     total_bits = len(PREAMBLE) + PAYLOAD_BYTES * 8
@@ -103,7 +124,7 @@ def decode_pcm(samples: list[float], sample_rate: int = 48000) -> bytes | None:
         power = 0.0
         for index, expected in enumerate(PREAMBLE):
             chunk = samples[start + index * bit_n : start + (index + 1) * bit_n]
-            bit, tone = _bit_power(chunk, sample_rate)
+            bit, tone = _bit_power(chunk, sample_rate, freq0, freq1)
             power += tone
             if bit == expected:
                 score += 1
@@ -120,9 +141,33 @@ def decode_pcm(samples: list[float], sample_rate: int = 48000) -> bytes | None:
     for index in range(PAYLOAD_BYTES * 8):
         begin = best_start + (offset + index) * bit_n
         chunk = samples[begin : begin + bit_n]
-        bit, _tone = _bit_power(chunk, sample_rate)
+        # Majority of three slices inside the bit, so a click on one edge does not flip it.
+        slices = (
+            chunk[: max(1, len(chunk) // 3)],
+            chunk[len(chunk) // 3 : 2 * len(chunk) // 3] or chunk,
+            chunk[2 * len(chunk) // 3 :] or chunk,
+        )
+        votes = [_bit_power(piece, sample_rate, freq0, freq1)[0] for piece in slices if piece]
+        bit = 1 if sum(votes) > len(votes) / 2 else 0
         bits.append(bit)
     return bits_to_bytes(bits)
+
+
+def encode_band(payload: bytes, sample_rate: int, band: str) -> list[float]:
+    freq0, freq1, bit_seconds = BANDS[band]
+    return encode_pcm(
+        payload,
+        sample_rate,
+        freq0=freq0,
+        freq1=freq1,
+        bit_seconds=bit_seconds,
+        repeats=2,
+    )
+
+
+def decode_band(samples: list[float], sample_rate: int, band: str) -> bytes | None:
+    freq0, freq1, bit_seconds = BANDS[band]
+    return decode_pcm(samples, sample_rate, freq0=freq0, freq1=freq1, bit_seconds=bit_seconds)
 
 
 def voice_band(samples: list[float], sample_rate: int, cutoff: float = 3400.0, stages: int = 4) -> list[float]:

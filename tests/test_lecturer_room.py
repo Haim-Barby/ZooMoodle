@@ -22,6 +22,8 @@ def test_public_room_payload_is_what_the_lecturer_page_restores():
         "id": created["id"],
         "title": "Graphs",
         "closed": False,
+        "audio_band": "ultrasonic",
+        "proof": "both",
         "student_path": f"/student?room={created['id']}",
         "student_url": f"http://testserver/student?room={created['id']}",
     }

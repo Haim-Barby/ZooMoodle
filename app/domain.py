@@ -45,6 +45,7 @@ class AttendanceRecord:
     subnet: str
     token_late: bool
     external_token: str | None = None
+    attendance_id: str = ""
 
 
 @dataclass

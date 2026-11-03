@@ -38,6 +38,8 @@ class Room:
         self.attention = AttentionAggregator()
         self.names: dict[str, str] = {}
         self.closed = False
+        self.audio_band = "ultrasonic"
+        self.proof = "both"
 
 
 class Store:

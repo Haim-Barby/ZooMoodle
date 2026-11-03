@@ -135,6 +135,7 @@ class AttendanceService:
 
         late = False
         external = None
+        attendance_id = ""
         if mode == "in_class":
             if not token_code:
                 raise CheckInError("missing_code")
@@ -147,8 +148,10 @@ class AttendanceService:
                 raise CheckInError("reused_token")
             self.redeemed.add(slot)
             late = verdict.late
+            attendance_id = secrets.token_urlsafe(9)
         else:
             external = secrets.token_hex(8)
+            attendance_id = ""
 
         challenge.used = True
         self.binding.observe(challenge.device_id, challenge.student_id, challenge.public_jwk)
@@ -164,7 +167,29 @@ class AttendanceService:
             subnet=subnet,
             token_late=late,
             external_token=external,
+            attendance_id=attendance_id,
         )
         self.records.append(record)
         self.detector.apply(self.records)
         return CheckInOutcome(record=record)
+
+    def mark_remote(self, now: float) -> AttendanceRecord:
+        """A remote visitor has a server marker and no device signature."""
+        marker = secrets.token_urlsafe(9)
+        record = AttendanceRecord(
+            student_id=marker,
+            student_name="",
+            device_id="remote-" + marker,
+            mode="remote",
+            seat_zone="remote",
+            at=now,
+            confidence=score_confidence("remote", False, "not_applicable", []),
+            flags=[],
+            subnet="not_applicable",
+            token_late=False,
+            external_token=marker,
+            attendance_id=marker,
+        )
+        self.records.append(record)
+        self.detector.apply(self.records)
+        return record

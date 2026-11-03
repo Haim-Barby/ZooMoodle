@@ -180,7 +180,7 @@ async function refreshOverview() {
   if (body.token) {
     document.querySelector("#beacon-code").textContent = body.token.code;
     document.querySelector("#beacon-meta").textContent =
-      "Window " + body.token.window + " · about " + body.token.seconds_left + "s left in this code";
+      "About " + body.token.seconds_left + "s left in this code";
   }
 }
 
@@ -189,7 +189,7 @@ async function refreshToken() {
   const token = await api("/api/rooms/" + state.roomId + "/token");
   document.querySelector("#beacon-code").textContent = token.code;
   document.querySelector("#beacon-meta").textContent =
-    "Window " + token.window + " · about " + token.seconds_left + "s left in this code";
+    "About " + token.seconds_left + "s left in this code";
   if (token.code !== state.lastCode) {
     state.lastCode = token.code;
     state.payloadHex = token.payload_hex;
@@ -597,6 +597,7 @@ function escapeHtml(value) {
   }[ch]));
 }
 
+paintWave();
 if (savedToken) {
   loadLlm().then((ok) => { if (ok) { showApp(); return restoreRoom(); } return null; });
 }

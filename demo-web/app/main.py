@@ -88,6 +88,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         room = app.state.store.create_room(str(body.get("title") or ""))
         return _room_link(request, room)
 
+    @app.get("/api/rooms")
+    def list_rooms(request: Request):
+        _require_lecturer(request)
+        rooms = [room for room in app.state.store.rooms.values() if not room.closed]
+        return {"rooms": [_room_link(request, room) | {"counts": _attendance_counts(room)} for room in rooms]}
+
     @app.get("/api/rooms/{room_id}")
     def public_room(room_id: str, request: Request):
         room = _room(app, room_id)
@@ -225,6 +231,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "flags": list(record.flags),
             "seat_zone": record.seat_zone,
             "subnet": record.subnet,
+            "student_id": record.student_id,
         }
         if record.external_token:
             payload["external_token"] = record.external_token

@@ -89,7 +89,9 @@ class AttendanceService:
     def open_challenge(self, student_id: str, device_id: str, public_jwk: dict, now: float) -> Challenge:
         student_id = student_id.strip()
         device_id = device_id.strip()
-        if not student_id or not device_id:
+        # The student id is optional. An in-class check-in without one gets
+        # the server-issued attendance id as its id (see check_in).
+        if not device_id:
             raise CheckInError("missing_identity")
         if not isinstance(public_jwk, dict) or not ids_match(device_id, public_jwk):
             raise CheckInError("device_mismatch")
@@ -153,10 +155,11 @@ class AttendanceService:
             external = secrets.token_hex(8)
             attendance_id = ""
 
+        student_id = challenge.student_id or attendance_id or external or ""
         challenge.used = True
-        self.binding.observe(challenge.device_id, challenge.student_id, challenge.public_jwk)
+        self.binding.observe(challenge.device_id, student_id, challenge.public_jwk)
         record = AttendanceRecord(
-            student_id=challenge.student_id,
+            student_id=student_id,
             student_name=student_name.strip()[:80],
             device_id=challenge.device_id,
             mode=mode,

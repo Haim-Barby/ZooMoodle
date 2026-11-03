@@ -2,6 +2,10 @@
 
 Forwarded headers are honored only when the socket peer is a trusted proxy.
 cloudflared on the lecturer laptop connects from loopback, which is the default.
+Render's proxy is not loopback. The blueprint sets FORWARDED_ALLOW_IPS so
+uvicorn stores the first X-Forwarded-For hop as this peer, and it widens
+ZOOMODLE_TRUSTED_PROXIES to private proxy ranges. This default stays loopback,
+so a direct client cannot spoof a campus address.
 """
 
 from __future__ import annotations

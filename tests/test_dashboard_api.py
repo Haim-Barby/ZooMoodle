@@ -59,6 +59,13 @@ def test_closed_room_rejects_new_checkins_and_still_exports():
     assert exported.status_code == 200
 
 
+def test_favicon_is_served():
+    _application, client = _client()
+    icon = client.get("/favicon.ico")
+    assert icon.status_code == 200
+    assert icon.content[:4] == b"\x00\x00\x01\x00"
+
+
 def test_diagram_catalog_lists_every_svg_without_rewriting_it():
     _application, client = _client()
     listed = client.get("/api/diagrams")

@@ -71,6 +71,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def lecturer_page():
         return FileResponse(STATIC_DIR / "lecturer.html")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        return FileResponse(STATIC_DIR / "favicon.ico", media_type="image/x-icon")
+
     @app.get("/student")
     def student_page():
         return FileResponse(STATIC_DIR / "student.html")

@@ -16,6 +16,9 @@ const state = {
   raf: 0,
   closed: false,
   camera: null,
+  band: "ultrasonic",
+  proof: "both",
+  joinLink: "",
 };
 
 function authHeaders() {
@@ -95,7 +98,12 @@ function showRoom(room) {
   document.querySelector("#room-code").textContent = room.id;
   document.querySelector("#lesson-title").textContent = room.title || "Lesson";
   if (room.title) document.querySelector("#title").value = room.title;
-  document.querySelector("#play").disabled = !!room.closed;
+  state.band = room.audio_band || state.band;
+  state.proof = room.proof || state.proof;
+  state.joinLink = link;
+  if (room.audio_band) document.querySelector("#audio-band").value = room.audio_band;
+  if (room.proof) document.querySelector("#proof").value = room.proof;
+  document.querySelector("#play").disabled = !!room.closed || state.proof === "qr";
   document.querySelector("#close-room").disabled = !!room.closed;
   const qr = document.querySelector("#qr");
   const svg = window.ZooQR ? ZooQR.toSvg(link, 5) : "";
@@ -177,6 +185,16 @@ async function refreshOverview() {
   document.querySelector("#key-fp").textContent = body.key_fingerprint;
   document.querySelector("#salt-fp").textContent = body.salt_fingerprint;
   document.querySelector("#live-pill").textContent = body.closed ? "Closed" : "Live";
+  if (body.audio_band) {
+    state.band = body.audio_band;
+    document.querySelector("#audio-band").value = body.audio_band;
+  }
+  if (body.proof) {
+    state.proof = body.proof;
+    document.querySelector("#proof").value = body.proof;
+    document.querySelector("#play").disabled = body.closed || body.proof === "qr";
+    document.querySelector("#rotating-qr").hidden = body.proof === "sound";
+  }
   if (body.token) {
     document.querySelector("#beacon-code").textContent = body.token.code;
     document.querySelector("#beacon-meta").textContent =
@@ -188,8 +206,13 @@ async function refreshToken() {
   if (!state.roomId) return;
   const token = await api("/api/rooms/" + state.roomId + "/token");
   document.querySelector("#beacon-code").textContent = token.code;
+  document.querySelector("#rotating-code").textContent = token.code;
   document.querySelector("#beacon-meta").textContent =
     "About " + token.seconds_left + "s left in this code";
+  if (state.joinLink && window.ZooQR && state.proof !== "sound") {
+    const proofLink = state.joinLink + (state.joinLink.indexOf("?") >= 0 ? "&" : "?") + "code=" + encodeURIComponent(token.code);
+    document.querySelector("#rotating-qr").innerHTML = ZooQR.toSvg(proofLink, 4);
+  }
   if (token.code !== state.lastCode) {
     state.lastCode = token.code;
     state.payloadHex = token.payload_hex;
@@ -255,7 +278,7 @@ async function startBeacon() {
   const audio = ensureAudio();
   if (audio.state === "suspended") await audio.resume();
   const bytes = ZooFSK.hexToBytes(state.payloadHex);
-  const pcm = ZooFSK.encode(bytes, audio.sampleRate);
+  const pcm = ZooFSK.encode(bytes, audio.sampleRate, state.band || "ultrasonic");
   const buffer = audio.createBuffer(1, pcm.length, audio.sampleRate);
   buffer.getChannelData(0).set(pcm);
   if (state.source) {
@@ -300,11 +323,68 @@ document.querySelector("#play").addEventListener("click", async () => {
 
 document.querySelector("#stop").addEventListener("click", stopBeacon);
 
+document.querySelector("#save-proof").addEventListener("click", async () => {
+  if (!state.roomId) return;
+  try {
+    const saved = await api("/api/rooms/" + state.roomId + "/lesson-settings", {
+      method: "POST",
+      body: JSON.stringify({
+        audio_band: document.querySelector("#audio-band").value,
+        proof: document.querySelector("#proof").value,
+      }),
+    });
+    state.band = saved.audio_band;
+    state.proof = saved.proof;
+    document.querySelector("#proof-state").textContent = "Saved. Phones follow " + saved.audio_band + " / " + saved.proof + ".";
+    document.querySelector("#play").disabled = state.closed || saved.proof === "qr";
+    document.querySelector("#rotating-qr").hidden = saved.proof === "sound";
+  } catch (err) {
+    document.querySelector("#proof-state").textContent = err.message;
+  }
+});
+
+document.querySelector("#test-device").addEventListener("click", async () => {
+  const note = document.querySelector("#test-device-status");
+  note.textContent = "Listening on this device…";
+  try {
+    const audio = ensureAudio();
+    if (audio.state === "suspended") await audio.resume();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+    });
+    const source = audio.createMediaStreamSource(stream);
+    const processor = audio.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    processor.onaudioprocess = (event) => {
+      chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      let total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      const keep = audio.sampleRate * 2;
+      while (total > keep && chunks.length > 1) total -= chunks.shift().length;
+      const merged = new Float32Array(total);
+      let offset = 0;
+      chunks.forEach((chunk) => { merged.set(chunk, offset); offset += chunk.length; });
+      const report = ZooFSK.inspect(merged, audio.sampleRate, state.band || "ultrasonic");
+      const heard = report.bytes ? ZooFSK.base32(report.bytes) : "";
+      note.textContent = "Test from this device · " + Math.round(report.power0) + " / " + Math.round(report.power1) +
+        (heard ? " · heard " + heard : " · listening…");
+    };
+    source.connect(processor);
+    processor.connect(audio.destination);
+    window.setTimeout(() => {
+      processor.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach((track) => track.stop());
+    }, 4000);
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
 document.querySelector("#test-tone").addEventListener("click", async () => {
   const audio = ensureAudio();
   if (audio.state === "suspended") await audio.resume();
   const osc = audio.createOscillator();
-  osc.frequency.value = ZooFSK.FREQ_0;
+  osc.frequency.value = ZooFSK.bandOf(state.band || "ultrasonic").f0;
   osc.connect(state.gain);
   osc.start();
   state.playing = true;
@@ -325,12 +405,14 @@ function renderSheet(records) {
   const rows = records.map((record) => {
     const flags = record.flags && record.flags.length ? record.flags.join(", ") : "";
     const kind = record.mode === "remote" ? "Remote" : "In class";
+    const issued = record.attendance_id || record.external_token || "";
     return "<tr><td>" + escapeHtml(record.name || "") + "</td><td>" + escapeHtml(record.student_id) +
-      "</td><td>" + kind + "</td><td>" + escapeHtml(record.seat_zone) + "</td><td>" + escapeHtml(record.confidence) +
+      "</td><td class=\"mono\">" + escapeHtml(issued) + "</td><td>" + kind + "</td><td>" + escapeHtml(record.seat_zone) +
+      "</td><td>" + escapeHtml(record.confidence) +
       "</td><td class=\"flag\">" + escapeHtml(flags) + "</td><td>" + escapeHtml(record.subnet) + "</td></tr>";
   }).join("");
   document.querySelector("#sheet").innerHTML =
-    "<table><thead><tr><th>Name</th><th>Id</th><th>Mode</th><th>Zone</th><th>Confidence</th><th>Flags</th><th>Subnet</th></tr></thead><tbody>" +
+    "<table><thead><tr><th>Name</th><th>Id</th><th>Attendance id</th><th>Mode</th><th>Zone</th><th>Confidence</th><th>Flags</th><th>Subnet</th></tr></thead><tbody>" +
     rows + "</tbody></table>";
 }
 

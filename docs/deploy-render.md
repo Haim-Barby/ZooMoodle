@@ -30,7 +30,9 @@ A few minutes before class, open `/api/health` and leave a tab open so the proce
 
 `ZOOMODLE_ALLOWED_SUBNETS` is empty, so the campus subnet check is off. It was not verified in the cloud.
 
-Phones need HTTPS for the microphone. Render serves HTTPS. Real speaker-to-phone audio on that URL has not been tried; use the on-screen code if listening fails, and record that separately.
+Phones need HTTPS for the microphone. Render serves HTTPS. Real speaker-to-phone audio on that URL has not been tried; use the rotating code if listening fails, and record that separately.
+
+An NFC sticker only needs to open the student page with the room filled in, for example `https://zoomoodle.onrender.com/student?room=ROOM`. It does not carry the rotating code.
 
 No LLM key is configured. Test connection asks you to enter an API key first. A lesson or homework run without a key returns a configuration error and does not invent a report. A key typed into the lecturer page stays in that process only and disappears on restart. The Blueprint does not ask for `LLM_*` variables.
 

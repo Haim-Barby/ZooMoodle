@@ -102,15 +102,34 @@
       <section class="panel" data-panel="beacon" hidden>
         <article class="card">
           <h2>Sound beacon</h2>
-          <p class="note">Play this on the laptop speakers, not headphones. The modem is fixed at 18 kHz for 0 and 19 kHz for 1. There is no other band.</p>
-          <dl class="finger"><dt>Frequency band</dt><dd class="mono">18 kHz / 19 kHz</dd></dl>
+          <p class="note">Play this on the laptop speakers, not headphones. Many laptops fade out above about 17 kHz, and phones often filter ultrasound unless noise processing is off.</p>
+          <label for="audio-band">Band</label>
+          <select id="audio-band">
+            <option value="ultrasonic">Ultrasonic 18/19 kHz</option>
+            <option value="near">Near-ultrasonic 17.0/17.6 kHz</option>
+            <option value="audible">Audible demo 4.2/5.6 kHz</option>
+          </select>
+          <label for="proof">In-class proof</label>
+          <select id="proof">
+            <option value="both">Sound and rotating QR</option>
+            <option value="sound">Sound only</option>
+            <option value="qr">Rotating QR only</option>
+          </select>
+          <button id="save-proof" class="secondary" type="button">Save proof settings</button>
+          <p id="proof-state" class="note"></p>
           <label for="volume">Volume</label>
           <input id="volume" type="range" min="0" max="100" value="70">
           <div class="row">
             <button id="play" type="button" disabled>Start beacon</button>
             <button id="stop" class="secondary" type="button" disabled>Stop</button>
             <button id="test-tone" class="secondary" type="button">Test tone</button>
+            <button id="test-device" class="secondary" type="button">Test from this device</button>
           </div>
+          <p id="test-device-status" class="note"></p>
+          <h2>Rotating code</h2>
+          <p class="note">The same HMAC window as the sound. It changes with the token. A phone can scan it or type it. Campus subnet is checked only when ZOOMODLE_ALLOWED_SUBNETS is set.</p>
+          <div id="rotating-qr" class="qr"></div>
+          <p id="rotating-code" class="code">—</p>
           <canvas id="wave" class="wave" width="640" height="88"></canvas>
           <div class="meter" aria-hidden="true"><span id="beacon-level"></span></div>
           <p id="beacon-level-text" class="note">Beacon is off.</p>

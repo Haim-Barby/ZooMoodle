@@ -114,6 +114,12 @@ const ERROR_TEXT = {
   missing_comment: "Enter your student id and a comment first.",
   missing_question: "Enter a question first.",
   already_upvoted: "You already upvoted that question.",
+  bad_session: "The session signature was rejected.",
+  session_expired: "That request was too old. Check the phone clock and try again.",
+  session_replay: "That request was already used. Try again.",
+  session_revoked: "This lesson is closed. Your session key no longer works.",
+  session_required: "Check in again. This action needs your session key.",
+  session_mismatch: "That action does not match this phone's session.",
   unknown_question: "That question is no longer available.",
   missing_homework: "Enter your student id and paste an answer first.",
   unknown_submission: "That homework submission was not found.",
@@ -145,6 +151,90 @@ function lessonIdentity() {
     studentId: flow.attendanceId || "",
     room: roomInput.value.trim(),
   };
+}
+
+let studentSession = null;
+
+function rememberSession(room, sessionId, sessionKey, studentId) {
+  studentSession = { room: room, sessionId: sessionId, sessionKey: sessionKey, studentId: studentId };
+  const encoded = JSON.stringify(studentSession);
+  sessionStorage.setItem("zoomoodle-session", encoded);
+  if (room) localStorage.setItem("zoomoodle-session-" + room, encoded);
+}
+
+function loadStudentSession() {
+  const room = roomInput.value.trim();
+  let raw = sessionStorage.getItem("zoomoodle-session");
+  if (!raw && room) raw = localStorage.getItem("zoomoodle-session-" + room);
+  if (!raw) return null;
+  try { studentSession = JSON.parse(raw); } catch (_err) { studentSession = null; }
+  if (!studentSession || (room && studentSession.room && studentSession.room !== room)) {
+    studentSession = null;
+    return null;
+  }
+  sessionStorage.setItem("zoomoodle-session", JSON.stringify(studentSession));
+  return studentSession;
+}
+
+function bytesToB64url(bytes) {
+  let text = "";
+  bytes.forEach((b) => { text += String.fromCharCode(b); });
+  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function b64urlToBytes(text) {
+  const pad = "=".repeat((4 - (text.length % 4)) % 4);
+  const raw = atob(text.replace(/-/g, "+").replace(/_/g, "/") + pad);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+async function sessionMacKey(secretB64) {
+  const base = await crypto.subtle.importKey("raw", b64urlToBytes(secretB64), "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({
+    name: "HKDF",
+    hash: "SHA-256",
+    salt: new TextEncoder().encode("zoomoodle-session-v1"),
+    info: new TextEncoder().encode("zoomoodle-session-mac"),
+  }, base, 256);
+  return crypto.subtle.importKey("raw", bits, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+}
+
+function noteSession(error) {
+  const alert = document.querySelector("#lesson-alert");
+  if (!alert || !error) return;
+  if (error === "session_revoked" || error === "session_required" || error === "bad_session" || error === "session_expired") {
+    alert.textContent = explain(error);
+    alert.className = "bad";
+  }
+}
+
+async function signedFetch(path, options) {
+  const session = studentSession || loadStudentSession();
+  if (!session || !session.sessionKey) {
+    return new Response(JSON.stringify({ error: "session_required" }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  const method = ((options && options.method) || "GET").toUpperCase();
+  const body = options && options.body ? options.body : "";
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonceBytes = new Uint8Array(16);
+  crypto.getRandomValues(nonceBytes);
+  const nonce = Array.from(nonceBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const key = await sessionMacKey(session.sessionKey);
+  const message = new TextEncoder().encode([method, path, body, timestamp, nonce].join("\n"));
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, message));
+  const headers = {
+    "x-zoomoodle-session": session.sessionId,
+    "x-zoomoodle-timestamp": timestamp,
+    "x-zoomoodle-nonce": nonce,
+    "x-zoomoodle-signature": bytesToB64url(mac),
+  };
+  if (body) headers["content-type"] = "application/json";
+  return fetch(path, { method: method, body: body || undefined, headers: headers });
 }
 
 async function checkIn(mode, tokenCode) {
@@ -201,6 +291,9 @@ async function checkIn(mode, tokenCode) {
     stopListening();
     if (!document.querySelector("#sid").value.trim() && body.student_id) {
       sessionStorage.setItem("zoomoodle-sid", body.student_id);
+    }
+    if (body.session_key && body.session_id) {
+      rememberSession(who.room, body.session_id, body.session_key, body.attendance_id || body.student_id);
     }
     enterLesson("in_class", body.attendance_id);
   } else {
@@ -272,6 +365,9 @@ document.querySelector("#remote").addEventListener("click", async () => {
     return;
   }
   note.textContent = "";
+  if (body.session_key && body.session_id) {
+    rememberSession(room, body.session_id, body.session_key, body.marker);
+  }
   enterLesson("remote", body.marker);
 });
 
@@ -382,13 +478,14 @@ function renderPoll(poll) {
     button.textContent = option;
     button.addEventListener("click", async () => {
       const zone = flow.mode === "remote" ? "remote" : seat;
-      const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/polls/" + poll.id + "/answers", {
+      const response = await signedFetch("/api/rooms/" + encodeURIComponent(who.room) + "/polls/" + poll.id + "/answers", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ student_id: who.studentId, option: option, seat_zone: zone }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
+        noteSession(payload.error);
         box.insertAdjacentHTML("beforeend", "<p class=\"bad\">" + escapeHtml(explain(payload.error, "Could not record the answer.")) + "</p>");
         return;
       }
@@ -413,7 +510,7 @@ async function loadPoll() {
   const who = lessonIdentity();
   if (!who.room) return;
   const query = who.studentId ? "?student_id=" + encodeURIComponent(who.studentId) : "";
-  const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/polls" + query);
+  const response = await signedFetch("/api/rooms/" + encodeURIComponent(who.room) + "/polls" + query);
   if (generation !== pollGeneration || !response.ok) return;
   const body = await response.json();
   if (generation !== pollGeneration) return;
@@ -441,7 +538,7 @@ async function loadQuestions() {
   const who = lessonIdentity();
   if (!who.room) return;
   const query = who.studentId ? "?student_id=" + encodeURIComponent(who.studentId) : "";
-  const response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/questions" + query);
+  const response = await signedFetch("/api/rooms/" + encodeURIComponent(who.room) + "/questions" + query);
   if (generation !== questionGeneration || !response.ok) return;
   const body = await response.json();
   if (generation !== questionGeneration) return;
@@ -469,7 +566,7 @@ async function loadQuestions() {
     button.disabled = !!question.upvoted;
     button.addEventListener("click", async () => {
       button.disabled = true;
-      const vote = await fetch(
+      const vote = await signedFetch(
         "/api/rooms/" + encodeURIComponent(who.room) + "/questions/" + encodeURIComponent(question.id) + "/upvote",
         {
           method: "POST",
@@ -480,6 +577,7 @@ async function loadQuestions() {
       const payload = await vote.json().catch(() => ({}));
       if (!vote.ok) {
         button.disabled = false;
+        noteSession(payload.error);
         setQuestionResult(explain(payload.error, "Could not upvote that question."), false);
         return;
       }
@@ -506,7 +604,7 @@ document.querySelector("#send-question").addEventListener("click", async () => {
   setQuestionResult("Sending…", true);
   let response;
   try {
-    response = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/questions", {
+    response = await signedFetch("/api/rooms/" + encodeURIComponent(who.room) + "/questions", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ student_id: who.studentId, text: text }),
@@ -517,6 +615,7 @@ document.querySelector("#send-question").addEventListener("click", async () => {
   }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
+    noteSession(body.error);
     setQuestionResult(explain(body.error, "Could not send the question."), false);
     return;
   }
@@ -540,7 +639,12 @@ async function refreshLesson() {
 async function refreshLessonBody() {
   const who = lessonIdentity();
   if (!who.room) return;
-  const counts = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/counts");
+  const counts = await signedFetch("/api/rooms/" + encodeURIComponent(who.room) + "/counts");
+  if (!counts.ok) {
+    const denied = await counts.json().catch(() => ({}));
+    noteSession(denied.error);
+    return;
+  }
   if (counts.ok) {
     const body = await counts.json();
     if (body.title && body.title !== flow.title) {
@@ -550,7 +654,7 @@ async function refreshLessonBody() {
     }
     document.querySelector("#count-in-class").textContent = String(body.in_class);
     document.querySelector("#count-remote").textContent = String(body.remote);
-    const summary = await fetch("/api/rooms/" + encodeURIComponent(who.room) + "/summary");
+    const summary = await signedFetch("/api/rooms/" + encodeURIComponent(who.room) + "/summary");
     const summaryBody = summary.ok ? await summary.json().catch(() => ({})) : {};
     const card = document.querySelector("#summary-card");
     const closed = !!(body.closed || summaryBody.closed);
@@ -619,6 +723,7 @@ document.querySelector("#scan").addEventListener("click", async () => {
   const urlRoom = params.get("room") || "";
   if (!saved || (urlRoom && saved.room && saved.room !== urlRoom)) return;
   if (saved.room) roomInput.value = saved.room;
+  loadStudentSession();
   flow.band = saved.band || flow.band;
   flow.proof = saved.proof || flow.proof;
   flow.title = saved.title || "";

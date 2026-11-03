@@ -71,6 +71,10 @@ def test_check_in_uses_a_three_by_three_map_and_the_lesson_has_no_zone_picker():
     assert "/counts" in script
     assert "/questions" in script
     assert "/summary" in script
+    assert "x-zoomoodle-signature" in script
+    assert "zoomoodle-session" in script
+    assert "session_revoked" in script
+    assert "HKDF" in script
     assert "holder.appendChild" not in script
     remote = script.split('"#remote"')[1].split('"#listen"')[0]
     assert "seat" not in remote

@@ -7,109 +7,210 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <h1>ZooMoodle</h1>
-    <p>Lecturer desk. The phone page is for students. The API key stays on this server.</p>
-  </header>
-  <main>
-    <section>
-      <h2>Unlock</h2>
-      <p class="note">The lecturer token is printed at startup when it is not set in the environment. It is not the model key.</p>
+  <div id="gate" class="gate">
+    <form class="gate-card" id="unlock-form">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">Z</div>
+        <div>
+          <strong>ZooMoodle</strong>
+          <div class="note">Lecturer desk</div>
+        </div>
+      </div>
+      <h1>Unlock the lesson</h1>
+      <p class="lede">The lecturer token is printed at startup when it is not set in the environment. It is not the model key, and it is not sent anywhere except this server.</p>
       <label for="token">Lecturer token</label>
-      <input id="token" type="password" autocomplete="off">
-      <button id="save-token" type="button">Save on this browser</button>
-      <p id="token-state" class="note"></p>
-    </section>
+      <input id="token" type="password" autocomplete="off" required>
+      <button id="save-token" class="btn" type="submit">Unlock dashboard</button>
+      <p id="token-state" class="note" role="status"></p>
+    </form>
+  </div>
 
-    <section>
-      <h2>Room</h2>
-      <label for="title">Lesson title</label>
-      <input id="title" value="Lesson">
-      <button id="open-room" type="button">Open room</button>
-      <p id="room-info" class="note"></p>
-    </section>
-
-    <section>
-      <h2>Attendance beacon</h2>
-      <p class="note">Play this on the laptop speakers, not headphones. The tone is near 18–19 kHz. The on-screen code is the fallback.</p>
-      <div id="beacon-code" class="code">—</div>
-      <p id="beacon-meta" class="note"></p>
-      <button id="play" type="button" disabled>Play ultrasonic beacon</button>
-      <button id="stop" class="secondary" type="button" disabled>Stop</button>
-    </section>
-
-    <section>
-      <h2>Attendance</h2>
-      <div class="row">
-        <button id="refresh" class="secondary" type="button">Refresh</button>
-        <button id="csv" class="secondary" type="button">Download CSV</button>
-        <button id="xlsx" class="secondary" type="button">Download XLSX</button>
+  <div id="shell" class="shell" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">Z</div>
+        <strong>ZooMoodle</strong>
       </div>
-      <div id="sheet"></div>
-    </section>
+      <nav class="nav" aria-label="Dashboard sections">
+        <button class="nav-item selected" type="button" data-tab="overview" aria-selected="true">Overview</button>
+        <button class="nav-item" type="button" data-tab="attendance">Attendance</button>
+        <button class="nav-item" type="button" data-tab="beacon">Sound beacon</button>
+        <button class="nav-item" type="button" data-tab="polls">Polls</button>
+        <button class="nav-item" type="button" data-tab="comments">Comments</button>
+        <button class="nav-item" type="button" data-tab="attention">Attention</button>
+        <button class="nav-item" type="button" data-tab="agent">AI agent</button>
+        <button class="nav-item" type="button" data-tab="architecture">Architecture</button>
+      </nav>
+      <button id="theme" class="secondary ghost" type="button">Theme</button>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <h1 id="lesson-title">No room yet</h1>
+          <p id="room-info" class="note">Open a room to get a student link.</p>
+        </div>
+        <div id="live-pill" class="pill">Idle</div>
+      </header>
 
-    <section>
-      <h2>Poll</h2>
-      <label for="question">Question</label>
-      <input id="question" placeholder="What does HMAC prove?">
-      <label for="options">Options, one per line</label>
-      <textarea id="options">Integrity
+      <section class="panel" data-panel="overview">
+        <div class="grid stats">
+          <article class="card"><p class="note">In class</p><p class="stat" id="count-class">0</p></article>
+          <article class="card"><p class="note">Remote</p><p class="stat" id="count-remote">0</p></article>
+          <article class="card"><p class="note">Flagged</p><p class="stat" id="count-flagged">0</p></article>
+        </div>
+        <div class="grid two" style="margin-top:0.8rem">
+          <article class="card">
+            <h2>Room</h2>
+            <label for="title">Lesson title</label>
+            <input id="title" value="Lesson">
+            <div class="row">
+              <button id="open-room" type="button">Open room</button>
+              <button id="close-room" class="secondary" type="button" disabled>Close room</button>
+            </div>
+            <p class="note">Closing stops new check-ins. Export still works. A new room gets a new key and salt.</p>
+            <h2>Join</h2>
+            <p id="student-link" class="link note">The public link appears here.</p>
+            <div id="qr" class="qr" hidden></div>
+            <p class="note">Code <strong id="room-code" class="mono">—</strong></p>
+          </article>
+          <article class="card">
+            <h2>This room's key</h2>
+            <p>Each room gets a new salt. The room key is derived from that salt with HKDF. The salt and the key stay on the server.</p>
+            <div class="finger"><span>Key fingerprint</span><strong id="key-fp" class="mono">—</strong></div>
+            <div class="finger"><span>Salt fingerprint</span><strong id="salt-fp" class="mono">—</strong></div>
+            <h2>Token window</h2>
+            <div id="beacon-code" class="code">—</div>
+            <p id="beacon-meta" class="note">Open a room to start the countdown.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="attendance" hidden>
+        <article class="card">
+          <h2>Attendance</h2>
+          <p class="note">In-class rows used the ultrasonic one-time code. Remote rows carry an external token. Flags mark shared devices, a second device, both modes, a late code, or a subnet mismatch.</p>
+          <div class="row">
+            <button id="refresh" class="secondary" type="button">Refresh</button>
+            <button id="csv" class="secondary" type="button">Download CSV</button>
+            <button id="xlsx" class="secondary" type="button">Download XLSX</button>
+          </div>
+          <div id="sheet" class="table-wrap"></div>
+        </article>
+      </section>
+
+      <section class="panel" data-panel="beacon" hidden>
+        <article class="card">
+          <h2>Sound beacon</h2>
+          <p class="note">Play this on the laptop speakers, not headphones. The modem is fixed at 18 kHz for 0 and 19 kHz for 1. There is no other band.</p>
+          <dl class="finger"><dt>Frequency band</dt><dd class="mono">18 kHz / 19 kHz</dd></dl>
+          <label for="volume">Volume</label>
+          <input id="volume" type="range" min="0" max="100" value="70">
+          <div class="row">
+            <button id="play" type="button" disabled>Start beacon</button>
+            <button id="stop" class="secondary" type="button" disabled>Stop</button>
+            <button id="test-tone" class="secondary" type="button">Test tone</button>
+          </div>
+          <canvas id="wave" class="wave" width="640" height="88"></canvas>
+          <div class="meter" aria-hidden="true"><span id="beacon-level"></span></div>
+          <p id="beacon-level-text" class="note">Beacon is off.</p>
+          <h2>Anti-relay</h2>
+          <p>The code is an HMAC over this room's key. It is valid for the current window and one grace window. Each device can redeem a code once, so a recording shared a few seconds later fails, and a second phone that replays the same code is rejected.</p>
+        </article>
+      </section>
+
+      <section class="panel" data-panel="polls" hidden>
+        <article class="card">
+          <h2>Poll</h2>
+          <label for="question">Question</label>
+          <input id="question" placeholder="What does HMAC prove?">
+          <label for="options">Options, one per line</label>
+          <textarea id="options">Integrity
 Confidentiality</textarea>
-      <label for="correct">Correct option (optional, exact text)</label>
-      <input id="correct">
-      <button id="add-poll" type="button">Ask the room</button>
-      <div id="polls"></div>
-    </section>
+          <label for="correct">Correct option (optional, exact text)</label>
+          <input id="correct">
+          <button id="add-poll" type="button">Ask the room</button>
+          <div id="polls"></div>
+        </article>
+      </section>
 
-    <section>
-      <h2>Comments</h2>
-      <div id="comments" class="note">None yet.</div>
-    </section>
+      <section class="panel" data-panel="comments" hidden>
+        <article class="card">
+          <h2>Comments</h2>
+          <div id="comments" class="note">None yet.</div>
+        </article>
+      </section>
 
-    <section>
-      <h2>Lesson agent</h2>
-      <p class="note">Imports a transcript file and asks the agent to relate topics, poll mistakes, and zone attention. Without a key, nothing is sent to a model.</p>
-      <input id="transcript" type="file" accept=".txt,.vtt,.srt,.md,text/plain">
-      <button id="summarize" type="button">Run lesson summary</button>
-      <pre id="summary">No summary yet.</pre>
-    </section>
+      <section class="panel" data-panel="attention" hidden>
+        <article class="card">
+          <h2>Attention</h2>
+          <p class="banner">Optional and local. Turning on the camera shows a preview on this laptop only. Video is not uploaded, stored, or used to recognize anyone. The map is zone aggregates from labeled samples, not a grade.</p>
+          <label class="row" for="camera-toggle">
+            <input id="camera-toggle" type="checkbox" style="width:auto">
+            <span>Connect a camera on this device</span>
+          </label>
+          <p id="camera-state" class="note">No camera is connected. The rest of the dashboard does not need one.</p>
+          <video id="camera-preview" class="preview" autoplay playsinline muted hidden></video>
+          <div class="row">
+            <button id="sample-attention" class="secondary" type="button">Load sample zone aggregates</button>
+          </div>
+          <div id="attention-map" class="zone-map"></div>
+          <pre id="attention">No samples.</pre>
+        </article>
+      </section>
 
-    <section>
-      <h2>Attention samples</h2>
-      <p class="note">Stub. This button stores labeled sample numbers. It does not open a camera, recognize faces, or grade anyone.</p>
-      <button id="sample-attention" class="secondary" type="button">Load sample-not-camera aggregates</button>
-      <pre id="attention">No samples.</pre>
-    </section>
+      <section class="panel" data-panel="agent" hidden>
+        <article class="card">
+          <h2>Model connection</h2>
+          <div id="key-banner" class="banner">Configure a key before running the agent. Nothing is sent to a model until a key is saved.</div>
+          <label for="provider">Provider</label>
+          <select id="provider">
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="xai">xAI</option>
+            <option value="ollama">Ollama (OpenAI-compatible)</option>
+            <option value="openai_compatible">Other OpenAI-compatible endpoint</option>
+          </select>
+          <label for="model">Model</label>
+          <input id="model" placeholder="gpt-4o-mini">
+          <label for="base-url">Base URL (blank uses the provider default)</label>
+          <input id="base-url" placeholder="https://api.openai.com/v1">
+          <label for="api-key">API key (kept in server memory, never shown again)</label>
+          <input id="api-key" type="password" autocomplete="off">
+          <div class="row">
+            <button id="save-llm" type="button">Save settings</button>
+            <button id="test-llm" class="secondary" type="button">Test connection</button>
+          </div>
+          <p id="llm-state" class="note" role="status"></p>
+        </article>
+        <article class="card">
+          <h2>Lesson summary</h2>
+          <input id="transcript" type="file" accept=".txt,.vtt,.srt,.md,text/plain">
+          <button id="summarize" type="button">Run lesson summary</button>
+          <pre id="summary">No summary yet.</pre>
+        </article>
+        <article class="card">
+          <h2>Homework</h2>
+          <div id="homework" class="note">No submissions.</div>
+        </article>
+      </section>
 
-    <section>
-      <h2>Homework reviews</h2>
-      <div id="homework" class="note">No submissions.</div>
-    </section>
+      <section class="panel" data-panel="architecture" hidden>
+        <article class="card">
+          <h2>Architecture</h2>
+          <p class="note">The design diagrams shipped with the project. Click one to zoom.</p>
+          <div id="gallery" class="gallery"></div>
+        </article>
+      </section>
+    </div>
+  </div>
 
-    <section>
-      <h2>Model connection</h2>
-      <label for="provider">Provider</label>
-      <select id="provider">
-        <option value="openai">OpenAI</option>
-        <option value="anthropic">Anthropic</option>
-        <option value="gemini">Google Gemini</option>
-        <option value="xai">xAI</option>
-        <option value="ollama">Ollama (OpenAI-compatible)</option>
-        <option value="openai_compatible">Other OpenAI-compatible endpoint</option>
-      </select>
-      <label for="model">Model</label>
-      <input id="model" placeholder="gpt-4o-mini">
-      <label for="base-url">Base URL (blank uses the provider default)</label>
-      <input id="base-url" placeholder="https://api.openai.com/v1">
-      <label for="api-key">API key (kept in server memory, never shown again)</label>
-      <input id="api-key" type="password" autocomplete="off">
-      <div class="row">
-        <button id="save-llm" type="button">Save settings</button>
-        <button id="test-llm" class="secondary" type="button">Test connection</button>
-      </div>
-      <p id="llm-state" class="note"></p>
-    </section>
-  </main>
+  <dialog id="lightbox" class="lightbox">
+    <button id="lightbox-close" class="secondary" type="button">Close</button>
+    <img id="lightbox-img" alt="">
+  </dialog>
+
+  <script src="/static/qr.js"></script>
   <script src="/static/fsk.js"></script>
   <script src="/static/lecturer.js"></script>
 </body>

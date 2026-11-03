@@ -1,0 +1,30 @@
+# Free Web Service for the classroom demo. No database, disk, or paid add-on.
+# Secrets are generated in the Render Dashboard and are not stored in git.
+services:
+  - type: web
+    name: zoomoodle
+    runtime: python
+    plan: free
+    branch: main
+    autoDeploy: true
+    autoDeployTrigger: commit
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: ZOOMODLE_MASTER_SECRET
+        generateValue: true
+      - key: ZOOMODLE_LECTURER_TOKEN
+        generateValue: true
+      # Empty disables the campus subnet check. Do not enable it for this demo.
+      - key: ZOOMODLE_ALLOWED_SUBNETS
+        value: ""
+      # Render's edge is the only ingress, so trusting its forwarded headers is safe here.
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
+      # Loopback stays trusted for local tunnels. Private ranges cover Render's proxy
+      # when uvicorn has not already replaced the peer with the first X-Forwarded-For hop.
+      - key: ZOOMODLE_TRUSTED_PROXIES
+        value: 127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16

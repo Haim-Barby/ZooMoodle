@@ -85,3 +85,7 @@ pytest
 ```
 
 For AI, enter provider, model, and key, press **Save settings**, then **Test connection**. Test alone does not save the key and clears its input. Supported adapters: OpenAI, Anthropic, Gemini, xAI, Ollama, and other OpenAI-compatible endpoints. Keys stay in server memory or the uncommitted environment file and are omitted from configuration responses.
+
+## Deploy on Render
+
+A free Web Service Blueprint is in `render.yaml`. Steps, the lecturer token, spin-down, and the in-memory store are in [Deploy on Render](docs/deploy-render.md).

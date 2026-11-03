@@ -81,7 +81,7 @@ Open the lecturer page through the printed HTTPS URL so its generated student li
 Tests:
 
 ```bash
-python -m pytest
+pytest
 ```
 
 For AI, enter provider, model, and key, press **Save settings**, then **Test connection**. Test alone does not save the key and clears its input. Supported adapters: OpenAI, Anthropic, Gemini, xAI, Ollama, and other OpenAI-compatible endpoints. Keys stay in server memory or the uncommitted environment file and are omitted from configuration responses.

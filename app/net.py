@@ -1,11 +1,13 @@
 """Client IP and optional campus-subnet check.
 
 Forwarded headers are honored only when the socket peer is a trusted proxy.
-cloudflared on the lecturer laptop connects from loopback, which is the default.
-Render's proxy is not loopback. The blueprint sets FORWARDED_ALLOW_IPS so
-uvicorn stores the first X-Forwarded-For hop as this peer, and it widens
-ZOOMODLE_TRUSTED_PROXIES to private proxy ranges. This default stays loopback,
-so a direct client cannot spoof a campus address.
+cloudflared on the lecturer laptop connects from loopback, which is the default,
+and only that path trusts CF-Connecting-IP.
+
+On Render the socket peer is the platform proxy, not the browser. The proxy
+appends the real client address at the end of X-Forwarded-For, so a value the
+browser sent first is ignored. Uvicorn must not be told to trust every peer:
+that would copy the leftmost hop into the socket address before this check runs.
 """
 
 from __future__ import annotations
@@ -21,11 +23,36 @@ def client_ip(
     trusted_proxies: tuple[str, ...] = DEFAULT_TRUSTED_PROXIES,
 ) -> str:
     direct = (peer or "").strip()
-    if peer_is_trusted(direct, trusted_proxies):
-        forwarded = _header(headers, "cf-connecting-ip") or _header(headers, "x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-    return direct
+    if not peer_is_trusted(direct, trusted_proxies):
+        return direct
+    # cloudflared terminates on loopback and sets CF-Connecting-IP itself.
+    # A browser can set that header, so it is ignored from every other peer.
+    if peer_is_trusted(direct, DEFAULT_TRUSTED_PROXIES):
+        cloudflare = _header(headers, "cf-connecting-ip")
+        if cloudflare:
+            return _hop_host(cloudflare.split(",")[0])
+    forwarded = _client_from_xff(_header(headers, "x-forwarded-for"), trusted_proxies)
+    return forwarded or direct
+
+
+def _client_from_xff(value: str, trusted_proxies: tuple[str, ...]) -> str:
+    hops = [_hop_host(part) for part in value.split(",")]
+    hops = [hop for hop in hops if hop]
+    for hop in reversed(hops):
+        if not peer_is_trusted(hop, trusted_proxies):
+            return hop
+    return hops[0] if hops else ""
+
+
+def _hop_host(value: str) -> str:
+    text = value.strip().strip('"')
+    if text.startswith("[") and "]" in text:
+        return text[1:text.index("]")]
+    if text.count(":") == 1:
+        host, port = text.rsplit(":", 1)
+        if port.isdigit():
+            return host
+    return text
 
 
 def peer_is_trusted(peer: str, trusted_proxies: tuple[str, ...]) -> bool:

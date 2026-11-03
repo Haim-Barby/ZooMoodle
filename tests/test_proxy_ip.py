@@ -105,6 +105,63 @@ def test_private_render_proxy_uses_the_client_hop_for_subnet():
     assert "shared_device" not in off_campus["flags"]
 
 
+def test_render_proxy_ignores_a_spoofed_leftmost_forwarded_hop():
+    app = create_app(make_settings(allowed_subnets=("203.0.113.10/32",), trusted_proxies=RENDER_PROXIES))
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=_transport(app, "10.0.0.4"), base_url="http://test") as client:
+            room = (await client.post(
+                "/api/rooms",
+                headers={"x-lecturer-token": TOKEN},
+                json={"title": "Lesson"},
+            )).json()
+            code = (await client.get(
+                f"/api/rooms/{room['id']}/token",
+                headers={"x-lecturer-token": TOKEN},
+            )).json()["code"]
+            return await _check_in(
+                client,
+                room["id"],
+                make_device(),
+                "stu-1",
+                code,
+                {
+                    "cf-connecting-ip": "203.0.113.10",
+                    "x-forwarded-for": "203.0.113.10, 198.51.100.8",
+                },
+            )
+
+    checked = asyncio.run(scenario())
+    assert checked["subnet"] == "mismatch"
+
+
+def test_forwarded_proto_sets_the_student_link_scheme(monkeypatch):
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    monkeypatch.delenv("ZOOMODLE_PUBLIC_ORIGIN", raising=False)
+    monkeypatch.delenv("ZOOMODLE_PUBLIC_BASE_URL", raising=False)
+    _application, client = _app_pair()
+    created = client.post(
+        "/api/rooms",
+        headers={"x-lecturer-token": TOKEN, "x-forwarded-proto": "https"},
+        json={"title": "Lesson"},
+    ).json()
+    assert created["student_url"].startswith("https://")
+    monkeypatch.setenv("ZOOMODLE_PUBLIC_BASE_URL", "https://zoomoodle.onrender.com")
+    again = client.post(
+        "/api/rooms",
+        headers={"x-lecturer-token": TOKEN},
+        json={"title": "Lesson"},
+    ).json()
+    assert again["student_url"] == f"https://zoomoodle.onrender.com/student?room={again['id']}"
+
+
+def _app_pair():
+    from fastapi.testclient import TestClient
+
+    application = create_app(make_settings())
+    return application, TestClient(application)
+
+
 def test_rewritten_client_peer_ignores_a_spoofed_forwarded_header():
     # Uvicorn with FORWARDED_ALLOW_IPS=* replaces the peer with the first hop.
     # That peer is the client, so a second header must not override it.

@@ -28,10 +28,10 @@ A few minutes before class, open `/api/health` and leave a tab open so the proce
 
 ## What this deploy does not prove
 
-`ZOOMODLE_ALLOWED_SUBNETS` is empty, so the campus subnet check is off. It is not verified on Render.
+`ZOOMODLE_ALLOWED_SUBNETS` is empty, so the campus subnet check is off. It was not verified in the cloud.
 
 Phones need HTTPS for the microphone. Render serves HTTPS. Real speaker-to-phone audio on that URL has not been tried; use the on-screen code if listening fails, and record that separately.
 
 No LLM key is configured. Test connection asks you to enter an API key first. A lesson or homework run without a key returns a configuration error and does not invent a report. A key typed into the lecturer page stays in that process only and disappears on restart. The Blueprint does not ask for `LLM_*` variables.
 
-`FORWARDED_ALLOW_IPS=*` is set because only Render's proxy can reach the process. Uvicorn then treats the first `X-Forwarded-For` hop as the client and `X-Forwarded-Proto` as `https`. `ZOOMODLE_TRUSTED_PROXIES` still includes loopback, plus private ranges for Render's own proxy. The local default remains loopback, so a direct client cannot spoof a campus address. Device checks use the phone's key, not the shared proxy address.
+Student links use `RENDER_EXTERNAL_URL` (`https://zoomoodle.onrender.com` unless the name got a suffix). `ZOOMODLE_PUBLIC_BASE_URL` can override that. `X-Forwarded-Proto` only fills in the scheme when neither is set. `FORWARDED_ALLOW_IPS` stays `127.0.0.1`, so uvicorn does not treat the leftmost `X-Forwarded-For` hop as the client. That hop is whatever the browser sent. Render appends the real client address, and the app keeps the rightmost hop that is not one of `ZOOMODLE_TRUSTED_PROXIES` (loopback plus Render's private proxy ranges). `CF-Connecting-IP` is trusted only from loopback, for cloudflared on a laptop. Device checks use the phone's key, not the shared proxy address.

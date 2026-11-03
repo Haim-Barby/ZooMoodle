@@ -542,15 +542,19 @@ _ORIGIN = re.compile(r"^https?://[A-Za-z0-9._:-]+(?::\d+)?$")
 def _public_origin(request: Request) -> str:
     """Origin the lecturer should hand to phones.
 
-    Render sets RENDER_EXTERNAL_URL. ZOOMODLE_PUBLIC_ORIGIN overrides it.
-    Otherwise use the request URL after uvicorn has applied X-Forwarded-Proto
-    from a trusted proxy (FORWARDED_ALLOW_IPS on Render).
+    An explicit public URL wins, then Render's RENDER_EXTERNAL_URL.
+    Otherwise keep the request host and take https from X-Forwarded-Proto.
+    That header is not used to decide the client IP.
     """
-    for name in ("ZOOMODLE_PUBLIC_ORIGIN", "RENDER_EXTERNAL_URL"):
+    for name in ("ZOOMODLE_PUBLIC_ORIGIN", "ZOOMODLE_PUBLIC_BASE_URL", "RENDER_EXTERNAL_URL"):
         raw = os.environ.get(name, "").strip().rstrip("/")
         if _ORIGIN.match(raw):
             return raw
-    return str(request.base_url).rstrip("/")
+    base = str(request.base_url).rstrip("/")
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if proto in ("https", "http") and "://" in base:
+        return proto + "://" + base.split("://", 1)[1]
+    return base
 
 
 def _room_link(request: Request, room) -> dict:

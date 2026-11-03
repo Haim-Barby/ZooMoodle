@@ -21,10 +21,11 @@ services:
       # Empty disables the campus subnet check. Do not enable it for this demo.
       - key: ZOOMODLE_ALLOWED_SUBNETS
         value: ""
-      # Render's edge is the only ingress, so trusting its forwarded headers is safe here.
+      # Do not set this to *. Uvicorn would copy the leftmost X-Forwarded-For hop,
+      # which the browser can forge, into the socket address. Loopback only.
       - key: FORWARDED_ALLOW_IPS
-        value: "*"
-      # Loopback stays trusted for local tunnels. Private ranges cover Render's proxy
-      # when uvicorn has not already replaced the peer with the first X-Forwarded-For hop.
+        value: "127.0.0.1"
+      # The app then sees Render's proxy as the peer and reads the rightmost
+      # untrusted X-Forwarded-For hop. Private ranges are that proxy, not the client.
       - key: ZOOMODLE_TRUSTED_PROXIES
         value: 127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16

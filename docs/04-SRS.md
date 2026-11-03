@@ -26,7 +26,7 @@ Constraints: a ten-minute classroom demo, simple web controls, one process, serv
 | FR-6 | Remote check-in requires no acoustic code. Generate a separate external token and store the row as `remote`. |
 | FR-7 | Require one of six seat zones: front/middle/back × left/right. |
 | FR-8 | Keep the first observed public key per device id. Flag late codes, subnet mismatch, both attendance modes, shared devices, and multiple devices per student. Preserve suspicious records for lecturer review and assign confidence `high`, `medium`, or `low`. |
-| FR-9 | For in-class rows, a client IP in `ZOOMODLE_ALLOWED_SUBNETS` is `match`, otherwise `mismatch`; an unset list gives `not_configured` without a confidence penalty. Honor forwarded headers only from `ZOOMODLE_TRUSTED_PROXIES`: prefer `CF-Connecting-IP`, then the first `X-Forwarded-For` hop; otherwise use the socket peer. |
+| FR-9 | For in-class rows, a client IP in `ZOOMODLE_ALLOWED_SUBNETS` is `match`, otherwise `mismatch`; an unset list gives `not_configured` without a confidence penalty. Honor forwarded headers only from `ZOOMODLE_TRUSTED_PROXIES`. From loopback, prefer `CF-Connecting-IP`. Otherwise walk `X-Forwarded-For` from the right and skip trusted proxies. A direct peer is used as-is. |
 | FR-10 | Lecturer-only CSV/XLSX export includes student id, name, mode, zone, UTC time, confidence, flags, subnet, and device id. |
 | FR-11 | Lecturers create polls with 2–6 options and an optional correct option from that list. One answer per student per poll. Students cannot see the correct option or counts by option/zone; lecturers can. |
 | FR-12 | Students post comments; lecturers see named comments. Agent tools use pseudonyms and redacted text. |

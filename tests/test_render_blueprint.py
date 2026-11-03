@@ -19,8 +19,9 @@ def test_render_blueprint_is_a_free_python_web_service():
     assert "ZOOMODLE_MASTER_SECRET" in text
     assert "ZOOMODLE_LECTURER_TOKEN" in text
     assert "ZOOMODLE_ALLOWED_SUBNETS" in text
-    assert 'value: "*"' in text or "value: '*'" in text
+    assert 'value: "*"' not in text and "value: '*'" not in text
     assert "FORWARDED_ALLOW_IPS" in text
+    assert 'value: "127.0.0.1"' in text
     assert "databases:" not in text
     assert "disk:" not in text
     version = (ROOT / ".python-version").read_text(encoding="utf-8").strip()

@@ -1,0 +1,102 @@
+@startuml classes
+title Core classes
+
+skinparam shadowing false
+hide circle
+
+class Room {
+  id
+  salt
+  key
+  transcript
+}
+
+class KeyManager {
+  derive_room_key(salt)
+}
+
+class TokenService {
+  issue()
+  verify()
+}
+
+class DeviceBinding {
+  observe(device, student, jwk)
+}
+
+class AttendanceService {
+  open_challenge()
+  check_in()
+}
+
+class AnomalyDetector {
+  apply(records)
+}
+
+class SeatZone {
+  value
+}
+
+class Poll {
+  question
+  options
+  answers
+}
+
+class Comment {
+  text
+}
+
+class HomeworkSubmission {
+  id
+  text
+}
+
+class ExportService {
+  to_csv()
+  to_xlsx()
+}
+
+class AttentionAggregator {
+  add_sample()
+  by_zone()
+}
+
+class LLMClient {
+  complete()
+  test_connection()
+}
+
+class LessonAgent {
+  run(task, snapshot)
+}
+
+class ToolRegistry {
+  dispatch()
+  produce_report()
+}
+
+class SummaryService {
+  summarize()
+}
+
+class HomeworkReviewService {
+  review()
+}
+
+KeyManager --> Room : room key
+TokenService --> Room
+AttendanceService --> TokenService
+AttendanceService --> DeviceBinding
+AttendanceService --> AnomalyDetector
+AttendanceService --> SeatZone
+Room --> Poll
+Room --> Comment
+Room --> HomeworkSubmission
+Room --> AttentionAggregator
+ExportService --> AttendanceService
+SummaryService --> LessonAgent
+HomeworkReviewService --> LessonAgent
+LessonAgent --> LLMClient
+LessonAgent --> ToolRegistry
+@enduml

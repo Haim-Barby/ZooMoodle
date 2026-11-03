@@ -1,0 +1,17 @@
+@startuml seq-poll
+title On-the-spot poll
+
+actor Lecturer
+actor Student
+participant "HTTP API" as API
+participant Room as Room
+
+Lecturer -> API : POST /polls\nquestion, options, optional correct option
+API -> Room : store poll
+Student -> API : GET /polls
+API --> Student : question and options\n(correct option omitted)
+Student -> API : POST /polls/{id}/answers\noption + seat zone
+API -> Room : one answer per student
+Lecturer -> API : GET /polls with lecturer token
+API --> Lecturer : counts by option and by zone
+@enduml

@@ -1,0 +1,32 @@
+@startuml seq-agent
+title Lesson-summary agent loop
+
+actor Lecturer
+participant "HTTP API" as API
+participant LessonAgent as Agent
+participant "LLMClient" as LLM
+participant ToolRegistry as Tools
+participant "Provider HTTPS" as Provider
+
+Lecturer -> API : upload transcript\nPOST /agent/summary
+API -> API : build a snapshot\nnames replaced by pseudonyms
+API -> Agent : run lesson_summary
+loop up to max steps
+  Agent -> LLM : messages + tool schemas
+  LLM -> Provider : tool-calling request\nkey in a header
+  Provider --> LLM : tool call or text
+  alt data tool
+    LLM --> Agent : tool call
+    Agent -> Tools : get_transcript_segment,\nget_poll_results, get_attention_by_zone,\nlist_comments, homework tools
+    Tools --> Agent : read-only JSON
+  else produce_report
+    Agent -> Tools : validate the JSON schema
+    Tools --> Agent : accepted report
+  end
+end
+Agent --> Lecturer : structured report\n(or a clear stop, never a fake summary)
+note over Agent
+  Homework review uses this same loop
+  with kind homework_review.
+end note
+@enduml

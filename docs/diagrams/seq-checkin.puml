@@ -1,0 +1,26 @@
+@startuml seq-checkin
+title In-class check-in
+
+actor Student
+participant "Student page" as UI
+participant "HTTP API" as API
+participant AttendanceService as Att
+participant TokenService as Tok
+participant AnomalyDetector as Det
+
+Student -> UI : pick seat, allow microphone
+UI -> UI : decode 18/19 kHz FSK\nor read the on-screen code
+UI -> API : POST /challenge\n(device id + public key)
+API -> Att : open_challenge
+Att --> UI : challenge id + nonce
+UI -> UI : sign challenge|nonce\nwith the device key
+UI -> API : POST /checkin\n(signature, code, zone)
+API -> Att : check_in
+Att -> Att : reject if challenge is old,\nreused, or signature fails
+Att -> Tok : verify HMAC for this\nwindow or the previous one
+Tok --> Att : fresh, late, or mismatch
+Att -> Att : reject a bad code or a code\nthis device already used
+Att -> Det : recompute flags
+Det --> API : confidence + flags
+API --> Student : in-class result
+@enduml

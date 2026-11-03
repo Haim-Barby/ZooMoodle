@@ -1,0 +1,36 @@
+@startuml seq-llm-test
+title Test connection
+
+actor Lecturer
+participant "Lecturer page" as UI
+participant "HTTP API" as API
+participant LLMClient as Client
+participant "Provider HTTPS" as Provider
+
+Lecturer -> UI : provider, model, key\npress Test connection
+UI -> API : POST /api/llm/test\nX-Lecturer-Token
+API -> Client : one short tool-calling request
+Client -> Provider : header key, 8s timeout
+alt 200 and a tool call
+  Provider --> UI : status ok, tool calling supported, latency
+else 200 and no tool call
+  Provider --> UI : status ok, tool calling not supported
+else 400 on tools, then a tiny completion works
+  Provider --> UI : status ok, tool calling not supported
+else 401
+  Provider --> UI : category invalid_key
+else 403 or 404
+  Provider --> UI : category no_access
+else 429
+  Provider --> UI : category rate_limit
+else timeout or network
+  Provider --> UI : category timeout or network
+else unknown provider name
+  API --> UI : category unknown_provider\nno request sent
+end
+note right of API
+  The key is not logged,
+  not stored by this call,
+  and not present in the JSON result.
+end note
+@enduml

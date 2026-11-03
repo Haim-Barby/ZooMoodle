@@ -29,23 +29,65 @@ document.querySelector("#save-token").addEventListener("click", () => {
   document.querySelector("#token-state").textContent = "Saved in this browser tab's session only.";
 });
 
+const ROOM_KEY = "zoomoodle-lecturer-room";
+
+function showRoom(room) {
+  state.roomId = room.id;
+  sessionStorage.setItem(ROOM_KEY, room.id);
+  const path = room.student_path || ("/student?room=" + room.id);
+  const link = new URL(path, window.location.origin).href;
+  document.querySelector("#room-info").innerHTML =
+    "Room <strong>" + room.id + "</strong>. Student link: <a href=\"" + link + "\">" + link + "</a>";
+  document.querySelector("#play").disabled = false;
+  if (room.title) document.querySelector("#title").value = room.title;
+}
+
+function forgetRoom(message) {
+  state.roomId = null;
+  sessionStorage.removeItem(ROOM_KEY);
+  document.querySelector("#play").disabled = true;
+  document.querySelector("#room-info").textContent = message;
+}
+
 document.querySelector("#open-room").addEventListener("click", async () => {
   try {
     const room = await api("/api/rooms", {
       method: "POST",
       body: JSON.stringify({ title: document.querySelector("#title").value }),
     });
-    state.roomId = room.id;
-    const link = new URL(room.student_path, window.location.origin).href;
-    document.querySelector("#room-info").innerHTML =
-      "Room <strong>" + room.id + "</strong>. Student link: <a href=\"" + link + "\">" + link + "</a>";
-    document.querySelector("#play").disabled = false;
+    showRoom(room);
     await refreshToken();
     await refreshSheet();
   } catch (err) {
     document.querySelector("#room-info").textContent = err.message;
   }
 });
+
+async function restoreRoom() {
+  const saved = sessionStorage.getItem(ROOM_KEY);
+  if (!saved) return;
+  try {
+    const room = await api("/api/rooms/" + encodeURIComponent(saved));
+    showRoom(room);
+  } catch (err) {
+    if (err.message === "unknown_room") {
+      forgetRoom("That room is no longer on this server. Open a new one.");
+      return;
+    }
+    document.querySelector("#room-info").textContent = err.message;
+    return;
+  }
+  try {
+    await refreshToken();
+  } catch (err) {
+    document.querySelector("#beacon-meta").textContent = err.message;
+  }
+  try {
+    await refreshSheet();
+  } catch (err) {
+    showSheetError(err);
+  }
+}
 
 async function refreshToken() {
   if (!state.roomId) return;
@@ -287,6 +329,7 @@ function escapeHtml(value) {
 }
 
 if (savedToken) loadLlm();
+restoreRoom();
 setInterval(() => {
   if (!state.roomId) return;
   refreshToken().catch(() => {});

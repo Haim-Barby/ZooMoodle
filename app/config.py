@@ -29,6 +29,25 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _refuse_render_without_secrets() -> None:
+    """Render must get both secrets from the dashboard, not from a log line."""
+    if os.environ.get("RENDER", "").strip().lower() != "true":
+        return
+    missing = [
+        name
+        for name in ("ZOOMODLE_MASTER_SECRET", "ZOOMODLE_LECTURER_TOKEN")
+        if not os.environ.get(name, "").strip()
+    ]
+    if not missing:
+        return
+    listed = " and ".join(missing)
+    raise SystemExit(
+        f"Cannot start on Render: {listed} is empty. "
+        "In the Render Dashboard open this service, then Environment, and set a value. "
+        "Reveal ZOOMODLE_LECTURER_TOKEN there. Startup does not print that token."
+    )
+
+
 @dataclass
 class Settings:
     master_secret: bytes
@@ -52,6 +71,7 @@ class Settings:
     @staticmethod
     def from_env() -> "Settings":
         load_dotenv()
+        _refuse_render_without_secrets()
         secret_text = _env("ZOOMODLE_MASTER_SECRET")
         ephemeral = not secret_text
         if ephemeral:

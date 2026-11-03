@@ -422,7 +422,8 @@ def _announce(settings: Settings) -> None:
     if "pytest" in sys.modules or getattr(_announce, "done", False):
         return
     _announce.done = True
-    if settings.generated_lecturer_token:
+    on_render = os.environ.get("RENDER", "").strip().lower() == "true"
+    if settings.generated_lecturer_token and not on_render:
         print(f"Lecturer token for this run: {settings.lecturer_token}", flush=True)
     if settings.ephemeral_master_secret:
         print(

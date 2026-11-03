@@ -13,6 +13,7 @@ from app.attendance import AttendanceService
 from app.domain import SEAT_ZONES, Comment, HomeworkSubmission, Poll, Question
 from app.llm.providers import LLMConfig
 from app.llm.tools import pseudonym, redact
+from app.session_keys import SessionBook
 
 
 class StoreError(Exception):
@@ -43,6 +44,7 @@ class Room:
         self.proof = "both"
         self.summary_draft = ""
         self.summary_published = ""
+        self.sessions = SessionBook()
 
 
 class Store:
@@ -81,6 +83,7 @@ class Store:
     def close_room(self, room_id: str) -> Room:
         room = self.get(room_id)
         room.closed = True
+        room.sessions.revoke_all()
         return room
 
     def get(self, room_id: str) -> Room:

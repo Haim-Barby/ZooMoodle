@@ -27,7 +27,9 @@ from app.llm.providers import (
     ProviderFailure,
     build_provider,
 )
+from app.domain import SEAT_ZONES
 from app.net import client_ip, subnet_status
+from app.session_keys import SessionError, canonical_message
 from app.store import Store, StoreError
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -100,9 +102,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _room_link(request, room)
 
     @app.get("/api/rooms/{room_id}/counts")
-    def room_counts(room_id: str):
-        """Headcounts only. No names, ids, tokens, or keys."""
+    async def room_counts(room_id: str, request: Request):
+        """Headcounts only. No names, ids, tokens, or keys. Signed by the student session."""
         room = _room(app, room_id)
+        _require_session(request, room, await request.body(), write=False)
         counts = _attendance_counts(room)
         return {
             "title": room.title,
@@ -130,6 +133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "key_fingerprint": _fingerprint(room.key),
             "salt_fingerprint": _fingerprint(room.salt),
             "counts": _attendance_counts(room),
+            "zones": _zone_counts(room),
             "token": {
                 "code": token.code,
                 "window": token.window,
@@ -142,7 +146,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def remote_join(room_id: str):
         room = _open_room(app, room_id)
         record = room.attendance.mark_remote(room.attendance.tokens.now())
-        return {"mode": "remote", "marker": record.attendance_id}
+        return {"mode": "remote", "marker": record.attendance_id, **_issue_session(room, record.attendance_id)}
 
     @app.post("/api/rooms/{room_id}/lesson-settings")
     async def lesson_settings(room_id: str, request: Request):
@@ -249,13 +253,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload["external_token"] = record.external_token
         if record.attendance_id:
             payload["attendance_id"] = record.attendance_id
+        identity = record.attendance_id or record.student_id
+        if identity:
+            payload.update(_issue_session(room, identity))
         return payload
 
     @app.get("/api/rooms/{room_id}/attendance")
     def attendance(room_id: str, request: Request):
         _require_lecturer(request)
         room = _room(app, room_id)
-        return {"records": [_record_dict(record) for record in room.attendance.records]}
+        return {"records": [_record_dict(record, room) for record in room.attendance.records]}
 
     @app.get("/api/rooms/{room_id}/export.csv")
     def export_csv(room_id: str, request: Request):
@@ -292,24 +299,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _poll_dict(poll, lecturer=True)
 
     @app.get("/api/rooms/{room_id}/polls")
-    def list_polls(room_id: str, request: Request, student_id: str = ""):
+    async def list_polls(room_id: str, request: Request, student_id: str = ""):
         room = _room(app, room_id)
+        viewer = student_id.strip()
+        if not _lecturer_ok(request):
+            session = _require_session(request, room, await request.body(), write=False)
+            if viewer and viewer != session.student_id:
+                raise StoreError("session_mismatch", 401)
+            viewer = session.student_id
         lecturer = _lecturer_ok(request)
         return {
             "polls": [
-                _poll_dict(poll, lecturer=lecturer, student_id=student_id.strip())
+                _poll_dict(poll, lecturer=lecturer, student_id=viewer)
                 for poll in room.polls
             ]
         }
 
     @app.post("/api/rooms/{room_id}/polls/{poll_id}/answers")
     async def answer_poll(room_id: str, poll_id: str, request: Request):
-        body = await _json(request)
-        _open_room(app, room_id)
+        raw = await request.body()
+        room = _room(app, room_id)
+        session = _require_session(request, room, raw, write=True)
+        body = _body_dict(raw)
+        _match_student(session, body.get("student_id"))
         poll = app.state.store.answer_poll(
             room_id,
             poll_id,
-            str(body.get("student_id") or ""),
+            session.student_id,
             str(body.get("option") or ""),
             str(body.get("seat_zone") or ""),
         )
@@ -350,19 +366,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/rooms/{room_id}/questions")
     async def add_question(room_id: str, request: Request):
-        body = await _json(request)
-        _open_room(app, room_id)
+        raw = await request.body()
+        room = _room(app, room_id)
+        session = _require_session(request, room, raw, write=True)
+        body = _body_dict(raw)
+        _match_student(session, body.get("student_id"))
         question = app.state.store.add_question(
             room_id,
-            str(body.get("student_id") or ""),
+            session.student_id,
             str(body.get("text") or ""),
         )
         return {"id": question.id}
 
     @app.get("/api/rooms/{room_id}/questions")
-    def list_questions(room_id: str, student_id: str = ""):
-        _room(app, room_id)
+    async def list_questions(room_id: str, request: Request, student_id: str = ""):
+        room = _room(app, room_id)
         viewer = student_id.strip()
+        if not _lecturer_ok(request):
+            session = _require_session(request, room, await request.body(), write=False)
+            if viewer and viewer != session.student_id:
+                raise StoreError("session_mismatch", 401)
+            viewer = session.student_id
         return {
             "questions": [
                 _question_dict(question, viewer)
@@ -372,18 +396,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/rooms/{room_id}/questions/{question_id}/upvote")
     async def upvote_question(room_id: str, question_id: str, request: Request):
-        body = await _json(request)
-        _open_room(app, room_id)
-        question = app.state.store.upvote_question(
-            room_id,
-            question_id,
-            str(body.get("student_id") or ""),
-        )
+        raw = await request.body()
+        room = _room(app, room_id)
+        session = _require_session(request, room, raw, write=True)
+        body = _body_dict(raw)
+        _match_student(session, body.get("student_id"))
+        question = app.state.store.upvote_question(room_id, question_id, session.student_id)
         return {"id": question.id, "votes": len(question.upvotes), "upvoted": True}
 
     @app.get("/api/rooms/{room_id}/summary")
-    def read_summary(room_id: str, request: Request):
+    async def read_summary(room_id: str, request: Request):
         room = _room(app, room_id)
+        if not _lecturer_ok(request):
+            _require_session(request, room, await request.body(), write=False)
         # Students see the text only after the room is closed and the lecturer published it.
         visible = room.summary_published if room.closed and room.summary_published else ""
         payload = {
@@ -764,7 +789,8 @@ def _decode_signature(text: str) -> bytes:
         return base64.urlsafe_b64decode(raw + pad)
 
 
-def _record_dict(record) -> dict:
+def _record_dict(record, room) -> dict:
+    identity = record.attendance_id or record.student_id
     return {
         "student_id": record.student_id,
         "name": record.student_name,
@@ -777,7 +803,74 @@ def _record_dict(record) -> dict:
         "subnet": record.subnet,
         "attendance_id": record.attendance_id,
         "external_token": record.external_token or "",
+        "verified": bool(room.sessions.is_verified(identity)),
     }
+
+
+def _zone_counts(room) -> dict:
+    counts = {zone: 0 for zone in SEAT_ZONES}
+    for record in room.attendance.records:
+        if record.mode == "in_class" and record.seat_zone in counts:
+            counts[record.seat_zone] += 1
+    return counts
+
+
+def _issue_session(room, student_id: str) -> dict:
+    session_id, session_key = room.sessions.issue(student_id)
+    return {"session_id": session_id, "session_key": session_key}
+
+
+def _signed_target(request: Request) -> str:
+    path = request.url.path
+    query = request.scope.get("query_string", b"").decode("ascii", errors="replace")
+    if query:
+        return path + "?" + query
+    return path
+
+
+def _body_dict(raw: bytes) -> dict:
+    if not raw:
+        return {}
+    try:
+        import json
+        body = json.loads(raw)
+    except Exception as exc:
+        raise StoreError("expected_json", 400) from exc
+    if not isinstance(body, dict):
+        raise StoreError("expected_json", 400)
+    return body
+
+
+def _match_student(session, presented) -> None:
+    if presented is None:
+        return
+    if str(presented).strip() != session.student_id:
+        raise StoreError("session_mismatch", 401)
+
+
+def _require_session(request: Request, room, raw: bytes, *, write: bool):
+    """Reads stay signed after close so the phone can load the published summary.
+
+    Writes are rejected once ``close_room`` has revoked the session.
+    """
+    try:
+        session = room.sessions.verify(
+            session_id=request.headers.get("x-zoomoodle-session", ""),
+            timestamp=request.headers.get("x-zoomoodle-timestamp", ""),
+            nonce=request.headers.get("x-zoomoodle-nonce", ""),
+            signature=request.headers.get("x-zoomoodle-signature", ""),
+            message=canonical_message(
+                request.method,
+                _signed_target(request),
+                raw,
+                request.headers.get("x-zoomoodle-timestamp", ""),
+                request.headers.get("x-zoomoodle-nonce", ""),
+            ),
+            write=write,
+        )
+    except SessionError as exc:
+        raise StoreError(exc.reason, 401) from exc
+    return session
 
 
 def _option_counts(poll) -> dict[str, int]:

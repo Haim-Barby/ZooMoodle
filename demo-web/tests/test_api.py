@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.llm.providers import LLMResponse, ToolCall
 from app.main import MISSING_KEY_MESSAGE, NOT_CONFIGURED, create_app
-from tests.conftest import make_device, make_settings
+from tests.conftest import make_device, make_settings, signed_request
 
 TOKEN = "lecturer-test-token"
 SECRET = "sk-test-secret"
@@ -72,13 +72,19 @@ def test_checkin_export_and_hidden_poll_answer():
         headers=_auth(),
         json={"question": "Pick one", "options": ["Yes", "No"], "correct_option": "Yes"},
     ).json()
-    hidden = client.get(f"/api/rooms/{room_id}/polls").json()["polls"][0]
+    checked_body = checked.json()
+    hidden = signed_request(client, checked_body, "GET", f"/api/rooms/{room_id}/polls").json()["polls"][0]
     assert "correct_option" not in hidden
-    answered = client.post(
+    assert checked_body["session_key"] not in sheet.text
+    answered = signed_request(
+        client,
+        checked_body,
+        "POST",
         f"/api/rooms/{room_id}/polls/{poll['id']}/answers",
-        json={"student_id": "stu-1", "option": "No", "seat_zone": "front-left"},
+        {"student_id": checked_body["attendance_id"], "option": "No", "seat_zone": "front-left"},
     )
     assert answered.status_code == 200
+    assert checked_body["session_key"] not in answered.text
 
 
 def test_llm_config_never_returns_the_key_and_test_classifies_errors():

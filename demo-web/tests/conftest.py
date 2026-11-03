@@ -1,4 +1,7 @@
 import base64
+import json
+import secrets
+import time
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -6,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from app.config import Settings
 from app.device_keys import device_id_from_public_jwk, signature_message
+from app.session_keys import canonical_message, decode_secret, derive_session_verifier, sign_message
 
 
 def make_settings(**overrides) -> Settings:
@@ -45,3 +49,20 @@ def make_device():
         return r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
     return {"jwk": jwk, "device_id": device_id, "sign": sign}
+
+
+def signed_request(client, creds, method, path, payload=None, timestamp=None, nonce=None):
+    """Sign a lesson action with the HKDF verifier, not the raw phone secret."""
+    body = b"" if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    stamp = str(int(time.time()) if timestamp is None else timestamp)
+    nonce = nonce or secrets.token_hex(16)
+    message = canonical_message(method, path, body, stamp, nonce)
+    verifier = derive_session_verifier(decode_secret(creds["session_key"]))
+    headers = {
+        "content-type": "application/json",
+        "x-zoomoodle-session": creds["session_id"],
+        "x-zoomoodle-timestamp": stamp,
+        "x-zoomoodle-nonce": nonce,
+        "x-zoomoodle-signature": sign_message(verifier, message),
+    }
+    return client.request(method, path, content=body, headers=headers)

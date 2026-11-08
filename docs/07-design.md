@@ -75,6 +75,29 @@ sequenceDiagram
 
 What is tested: the secret differs from the stored verifier; a forged MAC, an old timestamp, and a replayed nonce are rejected; a write after close returns `session_revoked`; a signed read of the summary still succeeds; the secret string is absent from attendance, overview, CSV, and XLSX; the phone signs the lesson calls in the headless browser run. What is only designed: Render's HTTPS proxy is what protects the one response that carries the secret (the app does not terminate TLS); the verifier lives in process memory until the process exits; restarting the process drops every room, including verifiers and used nonces.
 
+### Roster checkmark and the lecturer hotspot
+
+The roster checkmark is a second proof, not the rotating code. The lecturer imports a CSV. The server keeps names, group, a per-person salt, and an HMAC of the last four id digits under the master secret. It does not keep the email or the full id. The phone shows only the selected group's names. A blank group is included only when the lecturer asks for it.
+
+```mermaid
+sequenceDiagram
+  participant Phone
+  participant Helper as Helper on hotspot NIC
+  participant Server
+  Phone->>Server: name id + last four digits
+  Server-->>Phone: session + challenge, no checkmark
+  Phone->>Helper: top-level open /prove?c=challenge
+  Note over Helper: reject if the socket is not the bound address
+  Helper->>Server: HMAC observe
+  Helper-->>Phone: redirect back, no helper key
+  Phone->>Server: signed finish
+  Server-->>Phone: in_class checkmark and welcome
+```
+
+A body field `ssid` or `ip` does not satisfy `observe`. Closing the room revokes the helper and the student session. Relay through someone who is already on the hotspot is still possible; the proof is the network path to the helper, not the person and not the physical room.
+
+Tested: import minimization, group and duplicate handling, pin lockout, forged helper MAC, expiry, replay, cross-room, cross-student, revoke, close, remote without a checkmark, and a helper decision that rejects the wrong interface. The launcher plan is tested without changing a network. Not tested: macOS, Windows, iOS Safari, Android Chrome, or a real hotspot. Setup steps and those limits are in [hotspot presence](12-hotspot-presence.md).
+
 ### Remote check-in
 
 ![Remote check-in](diagrams/seq-remote.svg)

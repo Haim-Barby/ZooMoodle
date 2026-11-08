@@ -196,3 +196,23 @@ class AttendanceService:
         self.records.append(record)
         self.detector.apply(self.records)
         return record
+
+    def mark_hotspot(self, student_id: str, student_name: str, now: float) -> AttendanceRecord:
+        """In-class row after the hotspot verifier, not after a claimed address."""
+        record = AttendanceRecord(
+            student_id=student_id,
+            student_name=(student_name or "")[:80],
+            device_id="hotspot-" + student_id,
+            mode="in_class",
+            seat_zone="hotspot",
+            at=now,
+            confidence=score_confidence("in_class", False, "not_applicable", []),
+            flags=[],
+            subnet="not_applicable",
+            token_late=False,
+            external_token=None,
+            attendance_id=student_id,
+        )
+        self.records.append(record)
+        self.detector.apply(self.records)
+        return record

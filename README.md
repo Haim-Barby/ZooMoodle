@@ -10,6 +10,8 @@ Attendance codes can be shared, and lecturers receive feedback too late to see w
 
 Students use a phone browser; the lecturer uses a laptop. The goal is an implementable end-to-end design and a real classroom demo of about ten minutes. Attendance is the main feature. The system does not claim to prevent all fraud.
 
+A class roster can add a separate in-class checkmark: the student picks a name, enters the last four id digits, and only then a phone that reached the lecturer's local verifier is marked present. Double-click launchers start that verifier after a saved setup. They do not fully provision a hotspot. See [hotspot presence](docs/12-hotspot-presence.md).
+
 ## Scope
 
 Each lesson is a **Room**, with its own derived cryptographic key and its own attendance, polls, comments, homework, and transcript.

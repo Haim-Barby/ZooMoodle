@@ -34,7 +34,7 @@ const listen = { context: null, processor: null, stream: null, chunks: [], check
 const flow = { step: "join", mode: "", attendanceId: "", band: "ultrasonic", proof: "both", title: "" };
 
 function showStep(name) {
-  ["join", "mode", "class", "lesson"].forEach((step) => {
+  ["join", "mode", "identity", "class", "lesson"].forEach((step) => {
     const node = document.querySelector("#step-" + step);
     if (node) node.hidden = step !== name;
   });
@@ -120,6 +120,15 @@ const ERROR_TEXT = {
   session_revoked: "This lesson is closed. Your session key no longer works.",
   session_required: "Check in again. This action needs your session key.",
   session_mismatch: "That action does not match this phone's session.",
+  identity_rejected: "השם או ארבע הספרות לא התקבלו.",
+  identity_limited: "יותר מדי ניסיונות. נסו שוב מאוחר יותר.",
+  presence_required: "עדיין אין הוכחה שהטלפון הגיע למאמת של המרצה.",
+  presence_expired: "בדיקת הרשת פגה. נסו שוב.",
+  presence_replay: "בדיקת הרשת כבר שומשה.",
+  presence_unavailable: "המאמת המקומי לא פועל.",
+  presence_closed: "השיעור נסגר. אי אפשר לסמן נוכחות.",
+  presence_mismatch: "הבדיקה לא שייכת לטלפון הזה.",
+  bad_helper: "המאמת המקומי לא מזוהה.",
   unknown_question: "That question is no longer available.",
   missing_homework: "Enter your student id and paste an answer first.",
   unknown_submission: "That homework submission was not found.",
@@ -344,6 +353,14 @@ document.querySelector("#join-continue").addEventListener("click", async () => {
 });
 
 document.querySelector("#choose-class").addEventListener("click", () => {
+  showStep("identity");
+  saveFlow();
+  loadRosterNames().catch((err) => {
+    document.querySelector("#identity-status").textContent = err.message;
+  });
+});
+
+document.querySelector("#sound-instead").addEventListener("click", () => {
   showStep("class");
   saveFlow();
 });
@@ -368,6 +385,8 @@ document.querySelector("#remote").addEventListener("click", async () => {
   if (body.session_key && body.session_id) {
     rememberSession(room, body.session_id, body.session_key, body.marker);
   }
+  document.querySelector("#welcome").hidden = true;
+  document.querySelector("#remote-banner").hidden = false;
   enterLesson("remote", body.marker);
 });
 
@@ -681,9 +700,16 @@ function enterLesson(mode, attendanceId, title) {
   document.querySelector("#lesson-title").textContent = flow.title || "Lesson";
   document.querySelector("#lesson-mode").textContent = mode === "remote" ? "Remote" : "In class";
   document.querySelector("#attendance-id").textContent = flow.attendanceId || "—";
+  const welcome = document.querySelector("#welcome");
+  if (welcome && mode !== "remote" && sessionStorage.getItem("zoomoodle-present") === "1") {
+    const name = sessionStorage.getItem("zoomoodle-display") || "";
+    welcome.hidden = false;
+    welcome.textContent = "ברוך הבא, " + name;
+  }
   showStep("lesson");
   saveFlow();
   refreshLesson().catch(() => {});
+  loadSources().catch(() => {});
 }
 
 document.querySelector("#scan").addEventListener("click", async () => {
@@ -715,6 +741,188 @@ document.querySelector("#scan").addEventListener("click", async () => {
     setResult(err.message, false);
   }
 });
+
+function attemptId() {
+  let id = sessionStorage.getItem("zoomoodle-attempt");
+  if (!id) {
+    id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+    sessionStorage.setItem("zoomoodle-attempt", id);
+  }
+  return id;
+}
+
+async function loadRosterNames() {
+  const room = roomInput.value.trim();
+  const response = await fetch("/api/rooms/" + encodeURIComponent(room) + "/roster/names");
+  const body = await response.json().catch(() => ({}));
+  const select = document.querySelector("#roster-name");
+  select.replaceChildren();
+  (body.names || []).forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.display;
+    select.appendChild(option);
+  });
+  const note = document.querySelector("#identity-status");
+  if (!(body.names || []).length) note.textContent = "הרשימה עדיין לא נבחרה על ידי המרצה.";
+  else note.textContent = "";
+}
+
+document.querySelector("#identify").addEventListener("click", async () => {
+  const pinBox = document.querySelector("#pin");
+  const pin = pinBox.value.trim();
+  pinBox.value = "";
+  const note = document.querySelector("#identity-status");
+  if (!/^\d{4}$/.test(pin)) {
+    note.textContent = "צריך בדיוק 4 ספרות.";
+    return;
+  }
+  const room = roomInput.value.trim();
+  const response = await fetch("/api/rooms/" + encodeURIComponent(room) + "/roster/identify", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      entry_id: document.querySelector("#roster-name").value,
+      pin: pin,
+      attempt: attemptId(),
+    }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    note.textContent = explain(body.error, "בדיקת הזהות נכשלה.");
+    return;
+  }
+  rememberSession(room, body.session_id, body.session_key, body.entry_id);
+  sessionStorage.setItem("zoomoodle-display", body.display || "");
+  sessionStorage.removeItem("zoomoodle-present");
+  document.querySelector("#roster-remote").hidden = false;
+  if (body.presence === "ready" && body.bind_url && body.challenge_id) {
+    sessionStorage.setItem("zoomoodle-bind", body.bind_url);
+    sessionStorage.setItem("zoomoodle-challenge", body.challenge_id);
+    document.querySelector("#prove-network").hidden = false;
+    note.textContent = "הזהות התקבלה. עדיין אין סימון עד שהטלפון מגיע למאמת.";
+  } else {
+    document.querySelector("#prove-network").hidden = true;
+    note.textContent = "הזהות התקבלה, אבל המאמת המקומי לא פועל. אין סימון נוכחות.";
+  }
+});
+
+document.querySelector("#prove-network").addEventListener("click", () => {
+  const bind = sessionStorage.getItem("zoomoodle-bind") || "";
+  const challenge = sessionStorage.getItem("zoomoodle-challenge") || "";
+  if (!bind || !challenge) return;
+  window.location.assign(bind.replace(/\/$/, "") + "/prove?c=" + encodeURIComponent(challenge));
+});
+
+document.querySelector("#roster-remote").addEventListener("click", async () => {
+  const room = roomInput.value.trim();
+  const response = await signedFetch("/api/rooms/" + encodeURIComponent(room) + "/roster/remote", {
+    method: "POST",
+    body: "{}",
+  });
+  const body = await response.json().catch(() => ({}));
+  const note = document.querySelector("#identity-status");
+  if (!response.ok) {
+    note.textContent = explain(body.error, "לא הצלחנו לסמן חיבור מרחוק.");
+    return;
+  }
+  document.querySelector("#welcome").hidden = true;
+  document.querySelector("#remote-banner").hidden = false;
+  enterLesson("remote", body.marker || flow.attendanceId);
+});
+
+async function finishPresence(challengeId) {
+  const room = roomInput.value.trim();
+  loadStudentSession();
+  const response = await signedFetch("/api/rooms/" + encodeURIComponent(room) + "/presence/finish", {
+    method: "POST",
+    body: JSON.stringify({ challenge_id: challengeId }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.in_class) {
+    const note = document.querySelector("#identity-status");
+    if (note) note.textContent = explain(body.error, "אין סימון נוכחות.");
+    showStep("identity");
+    return;
+  }
+  sessionStorage.setItem("zoomoodle-present", "1");
+  if (body.display) sessionStorage.setItem("zoomoodle-display", body.display);
+  history.replaceState(null, "", location.pathname + location.search);
+  enterLesson("in_class", (studentSession && studentSession.studentId) || flow.attendanceId);
+}
+
+function showLearn(name) {
+  document.querySelectorAll("[data-learn-panel]").forEach((panel) => {
+    panel.classList.toggle("selected", panel.getAttribute("data-learn-panel") === name);
+  });
+  document.querySelectorAll("[data-learn]").forEach((button) => {
+    button.classList.toggle("selected", button.getAttribute("data-learn") === name);
+  });
+}
+
+document.querySelectorAll("[data-learn]").forEach((button) => {
+  button.addEventListener("click", () => showLearn(button.getAttribute("data-learn")));
+});
+
+async function loadSources() {
+  const room = roomInput.value.trim();
+  if (!room) return;
+  const response = await fetch("/api/rooms/" + encodeURIComponent(room) + "/sources");
+  if (!response.ok) return;
+  const body = await response.json();
+  const box = document.querySelector("#sources");
+  const sources = body.sources || [];
+  if (!sources.length) {
+    box.textContent = "No sources yet.";
+    return;
+  }
+  box.replaceChildren();
+  sources.forEach((source) => {
+    const label = document.createElement("label");
+    label.className = "row";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = true;
+    input.value = source.id;
+    input.style.width = "auto";
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(" " + source.title));
+    box.appendChild(label);
+  });
+}
+
+document.querySelector("#ask-send").addEventListener("click", async () => {
+  const room = roomInput.value.trim();
+  const ids = Array.from(document.querySelectorAll("#sources input:checked")).map((input) => input.value);
+  const response = await fetch("/api/rooms/" + encodeURIComponent(room) + "/ask", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ question: document.querySelector("#ask-text").value, source_ids: ids }),
+  });
+  const body = await response.json().catch(() => ({}));
+  const out = document.querySelector("#ask-result");
+  if (!response.ok) {
+    out.textContent = explain(body.error, "Could not answer.");
+    return;
+  }
+  const mode = body.mode === "model" ? "Model answer from the sources." : "Source search, not a model.";
+  document.querySelector("#ask-mode").textContent = mode;
+  const lines = [body.answer || ""];
+  (body.snippets || []).forEach((snippet) => lines.push(snippet.title + ": " + snippet.text));
+  out.textContent = lines.join("\n\n");
+});
+
+(function resumePresence() {
+  const hash = new URLSearchParams(String(location.hash || "").replace(/^#/, ""));
+  const challenge = hash.get("presence");
+  if (!challenge) return;
+  const paramsNow = new URLSearchParams(location.search);
+  if (paramsNow.get("room")) roomInput.value = paramsNow.get("room");
+  loadStudentSession();
+  finishPresence(challenge).catch((err) => {
+    document.querySelector("#identity-status").textContent = err.message;
+  });
+}());
 
 (function restoreFlow() {
   if (params.get("code")) document.querySelector("#code").value = params.get("code");

@@ -515,6 +515,7 @@ async function refreshSheet() {
   list.innerHTML = items.length
     ? items.map((item) => "<p><strong>" + item.votes + "</strong> · " + escapeHtml(item.text) + "</p>").join("")
     : "No questions yet.";
+  renderRoster().catch(() => {});
   document.querySelector("#polls").innerHTML = (polls.polls || []).map((poll) => {
     return "<p><strong>" + escapeHtml(poll.question) + "</strong> (" + poll.answer_count + " answers)</p><pre>" +
       escapeHtml(JSON.stringify({ counts: poll.counts, by_zone: poll.by_zone, correct_option: poll.correct_option }, null, 2)) + "</pre>";
@@ -836,6 +837,154 @@ function escapeHtml(value) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
   }[ch]));
 }
+
+async function renderRoster() {
+  if (!state.roomId) return;
+  const body = await api("/api/rooms/" + state.roomId + "/roster");
+  const rows = body.entries || [];
+  const box = document.querySelector("#roster-sheet");
+  if (!box) return;
+  if (!rows.length) {
+    box.textContent = "No roster yet.";
+    return;
+  }
+  box.innerHTML = "<table><thead><tr><th>Name</th><th>Group</th><th>In class</th><th>Remote</th></tr></thead><tbody>" +
+    rows.map((row) => "<tr><td>" + escapeHtml(row.display) + "</td><td>" + escapeHtml(row.group || "unspecified") +
+      "</td><td>" + (row.in_class ? "✓" : "") + "</td><td>" + (row.remote ? "remote" : "") + "</td></tr>").join("") +
+    "</tbody></table>";
+}
+
+function fillGroups(groups) {
+  const select = document.querySelector("#roster-group");
+  select.replaceChildren();
+  Object.keys(groups || {}).sort().forEach((group) => {
+    const option = document.createElement("option");
+    if (group === "") {
+      option.value = "__blank__";
+      option.textContent = "Unspecified (" + groups[group] + ") — not selected by default";
+    } else {
+      option.value = group;
+      option.textContent = group + " (" + groups[group] + ")";
+    }
+    select.appendChild(option);
+  });
+}
+
+document.querySelector("#upload-roster").addEventListener("click", async () => {
+  const note = document.querySelector("#roster-status");
+  try {
+    if (!state.roomId) throw new Error("Open a room first.");
+    const file = document.querySelector("#roster-file").files[0];
+    if (!file) throw new Error("Choose a CSV first.");
+    const text = await file.text();
+    const result = await api("/api/rooms/" + state.roomId + "/roster", {
+      method: "POST",
+      body: JSON.stringify({ text: text }),
+    });
+    note.textContent = "Imported " + result.imported + ". Duplicates " + result.duplicates + ". Skipped " + result.skipped + ".";
+    fillGroups(result.groups || {});
+    await renderRoster();
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+document.querySelector("#use-group").addEventListener("click", async () => {
+  const note = document.querySelector("#roster-status");
+  try {
+    const value = document.querySelector("#roster-group").value;
+    const body = value === "__blank__" ? { include_unspecified: true } : { group: value };
+    await api("/api/rooms/" + state.roomId + "/roster/group", { method: "POST", body: JSON.stringify(body) });
+    note.textContent = value === "__blank__" ? "Showing unspecified rows only." : "Showing group " + value + ".";
+    await renderRoster();
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+document.querySelector("#pair-helper").addEventListener("click", async () => {
+  const note = document.querySelector("#helper-status");
+  try {
+    const paired = await api("/api/rooms/" + state.roomId + "/presence/pair", { method: "POST", body: "{}" });
+    document.querySelector("#helper-key").value = paired.helper_key || "";
+    note.textContent = "Paired " + paired.helper_id + ". Copy the key from the password box into the launcher. This page does not keep it.";
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+document.querySelector("#revoke-helper").addEventListener("click", async () => {
+  try {
+    await api("/api/rooms/" + state.roomId + "/presence/revoke", { method: "POST", body: "{}" });
+    document.querySelector("#helper-key").value = "";
+    document.querySelector("#helper-status").textContent = "Helper revoked.";
+  } catch (err) {
+    document.querySelector("#helper-status").textContent = err.message;
+  }
+});
+
+document.querySelector("#save-bind").addEventListener("click", async () => {
+  try {
+    const body = await api("/api/rooms/" + state.roomId + "/presence/bind", {
+      method: "POST",
+      body: JSON.stringify({ url: document.querySelector("#bind-url").value }),
+    });
+    document.querySelector("#helper-status").textContent = "Phones will open " + body.bind_url + ".";
+  } catch (err) {
+    document.querySelector("#helper-status").textContent = err.message;
+  }
+});
+
+function wifiEscape(value) {
+  return String(value).replace(/([\\;,:"])/g, "\\$1");
+}
+
+document.querySelector("#show-wifi-qr").addEventListener("click", () => {
+  const ssid = document.querySelector("#wifi-ssid").value;
+  const password = document.querySelector("#wifi-password").value;
+  const box = document.querySelector("#wifi-qr");
+  if (!ssid) {
+    box.hidden = true;
+    return;
+  }
+  const payload = "WIFI:T:WPA;S:" + wifiEscape(ssid) + ";P:" + wifiEscape(password) + ";;";
+  const svg = window.ZooQR ? ZooQR.toSvg(payload, 4) : "";
+  box.innerHTML = svg;
+  box.hidden = !svg;
+  if (!svg) document.querySelector("#helper-status").textContent = "That Wi-Fi payload is too long for this QR.";
+});
+
+document.querySelector("#add-source").addEventListener("click", async () => {
+  const note = document.querySelector("#source-status");
+  try {
+    await api("/api/rooms/" + state.roomId + "/sources", {
+      method: "POST",
+      body: JSON.stringify({
+        title: document.querySelector("#source-title").value,
+        text: document.querySelector("#source-text").value,
+      }),
+    });
+    document.querySelector("#source-text").value = "";
+    note.textContent = "Source saved. Students can search it. The model stays off.";
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+document.querySelector("#enable-model").addEventListener("click", async () => {
+  const note = document.querySelector("#source-status");
+  try {
+    const body = await api("/api/rooms/" + state.roomId + "/sources/model", {
+      method: "POST",
+      body: JSON.stringify({ enabled: true }),
+    });
+    note.textContent = body.ready
+      ? "Model answers are on. Only the pasted sources are sent."
+      : "Model answers are allowed, but no key is configured, so students still get source search.";
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
 
 paintWave();
 if (savedToken) {

@@ -11,7 +11,15 @@ This is the lecturer setup for the classroom Wi-Fi check. It is **not** fully au
 | Python is installed, the repo is on the laptop, and `~/.zoomoodle/lecturer-setup.json` has the server, room, bind address, and helper key | Starts the local verifier on the address you saved | Turn the hotspot on, change the firewall, or approve a system dialog |
 | That file does not exist yet | Prints the manual steps and can open the documented settings page if you answer yes | Invent a hotspot, share the same Wi-Fi adapter on a Mac, or store the Wi-Fi password |
 
-The Wi-Fi password is typed only in the lecturer browser to draw a QR. It is not sent to the server and not written to the setup file.
+The Wi-Fi password is typed only in the lecturer browser to draw a QR. It is not sent to the server and not written to the setup file. The network name is saved only as that QR label. Presence uses the verifier address and the phone address range instead.
+
+On the lecturer page, enter:
+
+- Network name, for example the name you gave the hotspot. This does not prove a phone joined it.
+- Verifier address: the laptop's address on that network. Windows Mobile Hotspot is often `192.168.137.1`. macOS Internet Sharing is often `192.168.2.1`.
+- Phone address range: the subnet the hotspot hands out, often `192.168.137.0/24` or `192.168.2.0/24`. A missing range, a public range, or anything wider than a /24 is rejected. The verifier address has to sit inside the range.
+
+The helper reads those values from the mode-`0600` setup file. For each phone it reads the socket's local address and the socket's peer address. It does not read X-Forwarded-For, a claimed SSID, or the public address Render sees. A peer outside the range, or a connection that arrived on a different interface, is rejected. Someone who can already reach the verifier from inside the range can still relay a challenge. That is a path check, not a check of the person. If another network uses the same subnet, the operating system may not deliver the phone to this address; the tool does not paper over that by accepting every private address.
 
 ## macOS
 
@@ -54,7 +62,8 @@ Tested in this repo, on the cloud Linux runner, with synthetic names:
 - Last-four failures lock out, and a claimed IP or SSID does not check the roster
 - Forged helper signature, expired challenge, replay, cross-room, cross-student, revoke, and close
 - Launcher plan: macOS never reports the hotspot started; Windows without an API success stays manual; the Wi-Fi password is not stored
-- The helper function rejects a connection whose local address is not the bind address
+- The helper rejects a connection whose local address is not the bind address, and a real socket whose peer is outside the configured range
+- A forged X-Forwarded-For header does not move an out-of-range peer inside the range
 
 Not tested, and not claimed:
 
@@ -74,6 +83,8 @@ If the phone cannot open the verifier, there is no checkmark. That is intentiona
 ב-macOS אי אפשר, מכאן, להפעיל Internet Sharing ואי אפשר לשתף את אותו מתאם Wi-Fi שממנו מגיע האינטרנט. נשאר לכם: הגדרות המערכת → General → Sharing → Internet Sharing, לאשר בעצמכם, ולרשום את כתובת המק ברשת (לרוב `192.168.2.1`).
 
 ב-Windows יש API רשמי ל-Mobile Hotspot, אבל הוא תלוי במתאם. אם הוא נכשל, נפתח מסך ההגדרות ואתם מפעילים את הנקודה החמה בעצמכם. הפקודה הישנה `netsh hostednetwork` לא בשימוש.
+
+בעמוד המרצה ממלאים גם את טווח הכתובות שהנקודה החמה מחלקת, לרוב `192.168.137.0/24` בווינדוס או `192.168.2.0/24` במק. בלי טווח, או עם טווח ציבורי או רחב מ-/24, אין סימון. המאמת בודק את הכתובת שהגיעה בשקע, לא כתובת שהטלפון טוען לה ולא את הכתובת הציבורית של Render.
 
 שני קודים נפרדים: אחד רק לרשת Wi-Fi, והטלפון שואל את מערכת ההפעלה; השני רק לפתיחת ZooMoodle. סימון ברשימה מגיע רק אחרי בחירת שם, ארבע ספרות, והגעה למאמת על הכתובת שנבחרה. כתובת או שם רשת שהטלפון מדווח עליהם לא מספיקים.
 

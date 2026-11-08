@@ -114,6 +114,14 @@ function showRoom(room) {
   qr.hidden = !svg;
   document.querySelector("#live-pill").textContent = room.closed ? "Closed" : "Live";
   loadSummaryEditor().catch(() => {});
+  loadNetwork().catch(() => {});
+}
+
+async function loadNetwork() {
+  if (!state.roomId) return;
+  try {
+    showNetwork(await api("/api/rooms/" + state.roomId + "/presence"));
+  } catch (_err) { /* the room may not be paired yet */ }
 }
 
 async function loadSummaryEditor() {
@@ -923,15 +931,42 @@ document.querySelector("#revoke-helper").addEventListener("click", async () => {
   }
 });
 
+function showNetwork(body) {
+  if (!body) return;
+  if (body.network_name) document.querySelector("#network-name").value = body.network_name;
+  if (body.bind_host) document.querySelector("#bind-host").value = body.bind_host;
+  if (body.bind_port) document.querySelector("#bind-port").value = body.bind_port;
+  if (body.client_cidr) document.querySelector("#client-cidr").value = body.client_cidr;
+  if (body.network_name) document.querySelector("#wifi-ssid").value = body.network_name;
+  const notes = document.querySelector("#network-diagnostics");
+  notes.textContent = (body.diagnostics || []).join(" ");
+  if (body.bind_url) {
+    document.querySelector("#helper-status").textContent = "Phones open " + body.bind_url + " only if their address is inside " + body.client_cidr + ".";
+  }
+}
+
 document.querySelector("#save-bind").addEventListener("click", async () => {
+  const notes = document.querySelector("#network-diagnostics");
   try {
     const body = await api("/api/rooms/" + state.roomId + "/presence/bind", {
       method: "POST",
-      body: JSON.stringify({ url: document.querySelector("#bind-url").value }),
+      body: JSON.stringify({
+        network_name: document.querySelector("#network-name").value,
+        bind_host: document.querySelector("#bind-host").value,
+        bind_port: document.querySelector("#bind-port").value,
+        client_cidr: document.querySelector("#client-cidr").value,
+      }),
     });
-    document.querySelector("#helper-status").textContent = "Phones will open " + body.bind_url + ".";
+    showNetwork(body);
   } catch (err) {
-    document.querySelector("#helper-status").textContent = err.message;
+    const text = {
+      missing_network: "Enter both the verifier address and the phone address range.",
+      bad_network: "That address or range is not valid.",
+      bind_outside_range: "The verifier address has to be inside the phone address range.",
+      range_too_wide: "That range is too wide. Use a /24 such as 192.168.137.0/24 or 192.168.2.0/24.",
+      public_range: "Use the private range the hotspot assigns, not a public network.",
+    }[err.message] || err.message;
+    notes.textContent = text;
   }
 });
 

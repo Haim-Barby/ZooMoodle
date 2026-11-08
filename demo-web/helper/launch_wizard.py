@@ -32,6 +32,8 @@ def save_setup(path: Path, setup: dict) -> None:
         "room_id": setup.get("room_id", ""),
         "bind_host": setup.get("bind_host", ""),
         "bind_port": int(setup.get("bind_port") or 8787),
+        "client_cidr": setup.get("client_cidr", ""),
+        "network_name": setup.get("network_name", ""),
         "public_origin": setup.get("public_origin", ""),
         "helper_id": setup.get("helper_id", ""),
         "helper_key": setup.get("helper_key", ""),
@@ -47,7 +49,14 @@ def load_setup(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def plan_launch(*, platform: str, opt_in: bool, configured: bool, hotspot_result: dict | None = None) -> dict:
+def plan_launch(
+    *,
+    platform: str,
+    opt_in: bool,
+    configured: bool,
+    hotspot_result: dict | None = None,
+    network_ready: bool = False,
+) -> dict:
     """Describe what this launch will and will not do. It does not touch the OS."""
     hotspot_result = hotspot_result or {}
     report = {
@@ -94,7 +103,14 @@ def plan_launch(*, platform: str, opt_in: bool, configured: bool, hotspot_result
         report["manual_remaining"].append("Create the hotspot yourself on this operating system, then start the verifier.")
     if not configured:
         report["starts_verifier"] = False
-        report["manual_remaining"].append("First run still needs the server URL, lecturer token, room, and hotspot address.")
+        report["manual_remaining"].append(
+            "First run still needs the server URL, lecturer token, room, verifier address, and phone address range."
+        )
+    elif not network_ready:
+        report["starts_verifier"] = False
+        report["manual_remaining"].append(
+            "Enter the verifier address and the phone address range. The verifier will not start without them."
+        )
     return report
 
 
@@ -125,9 +141,15 @@ def main() -> None:
     print(json.dumps(diagnostics(system)["hotspot"]["note"]))
     path = config_path()
     setup = load_setup(path)
-    configured = bool(setup.get("server") and setup.get("helper_key") and setup.get("bind_host"))
+    configured = bool(setup.get("server") and setup.get("helper_key") and setup.get("bind_host") and setup.get("room_id"))
+    network_ready = bool(setup.get("bind_host") and setup.get("client_cidr"))
     answer = input("Open the documented hotspot settings now? [y/N] ").strip().lower()
-    report = plan_launch(platform=system, opt_in=answer == "y", configured=configured)
+    report = plan_launch(
+        platform=system,
+        opt_in=answer == "y",
+        configured=configured,
+        network_ready=network_ready,
+    )
     if report["opened_settings"] and report["settings_target"]:
         default_settings_opener(report["settings_target"])
         print("Opened settings. Finish the remaining step there if the hotspot is not already on.")
@@ -148,6 +170,7 @@ def main() -> None:
         setup["helper_id"],
         setup["helper_key"],
         setup.get("public_origin") or setup["server"],
+        client_cidr=setup["client_cidr"],
     )
     server = serve(helper, int(setup.get("bind_port") or 8787))
     print("Verifier listening on http://%s:%s/prove" % (setup["bind_host"], setup.get("bind_port") or 8787))

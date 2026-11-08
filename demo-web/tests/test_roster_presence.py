@@ -49,7 +49,12 @@ def _arm(client, room_id, group="3"):
     bound = client.post(
         f"/api/rooms/{room_id}/presence/bind",
         headers=_auth(),
-        json={"url": "http://192.168.137.1:8787"},
+        json={
+            "network_name": "ClassLab",
+            "bind_host": "192.168.137.1",
+            "bind_port": 8787,
+            "client_cidr": "192.168.137.0/24",
+        },
     )
     assert bound.status_code == 200
     return paired.json()
@@ -69,7 +74,10 @@ def _observe(client, room_id, helper, challenge_id, when=None):
     from app.session_keys import canonical_message, decode_secret
 
     path = f"/api/rooms/{room_id}/presence/observe"
-    raw = json.dumps({"challenge_id": challenge_id}, separators=(",", ":")).encode("utf-8")
+    raw = json.dumps(
+        {"challenge_id": challenge_id, "local": "192.168.137.1", "peer": "192.168.137.40", "ssid": "not-used"},
+        separators=(",", ":"),
+    ).encode("utf-8")
     stamp = str(int(time.time() if when is None else when))
     nonce = secrets.token_hex(16)
     message = canonical_message("POST", path, raw, stamp, nonce)
@@ -305,7 +313,12 @@ def test_stale_cross_room_revoke_close_and_remote_are_separate():
     client.post(
         f"/api/rooms/{room_id}/presence/bind",
         headers=_auth(),
-        json={"url": "http://192.168.137.1:8787"},
+        json={
+            "network_name": "ClassLab",
+            "bind_host": "192.168.137.1",
+            "bind_port": 8787,
+            "client_cidr": "192.168.137.0/24",
+        },
     )
     again = client.post(
         f"/api/rooms/{room_id}/roster/identify",
@@ -362,8 +375,9 @@ def test_helper_rejects_the_wrong_interface_and_hotspot_changes_nothing():
         "helper",
         encode_secret(b"\x11" * 32),
         "https://class.example",
+        client_cidr="192.168.137.0/24",
     )
-    status, _location = helper.prove("c" * 32, ("10.0.0.5", 8787))
+    status, _location = helper.prove("c" * 32, ("10.0.0.5", 8787), ("192.168.137.40", 50000))
     assert status == 403
     assert helper.observations == 0
     try:
@@ -421,3 +435,180 @@ def test_source_search_does_not_call_a_model_or_send_the_roster():
     assert modeled.status_code == 200
     assert modeled.json()["mode"] == "model"
     assert calls["n"] == 1
+
+
+def test_network_config_rejects_wide_or_public_ranges_and_round_trips():
+    _application, client = _client()
+    room_id = _room(client)
+    cases = [
+        ("192.168.137.1", "192.168.0.0/16", "range_too_wide"),
+        ("10.1.2.1", "10.0.0.0/8", "range_too_wide"),
+        ("192.168.137.1", "0.0.0.0/0", "range_too_wide"),
+        ("8.8.8.8", "8.8.8.0/24", "public_range"),
+        ("2001:db8::1", "2001:db8::/64", "public_range"),
+    ]
+    for host, cidr, reason in cases:
+        rejected = client.post(
+            f"/api/rooms/{room_id}/presence/bind",
+            headers=_auth(),
+            json={"network_name": "ClassLab", "bind_host": host, "client_cidr": cidr},
+        )
+        assert rejected.status_code == 400, (host, cidr, rejected.text)
+        assert rejected.json()["error"] == reason
+    outside = client.post(
+        f"/api/rooms/{room_id}/presence/bind",
+        headers=_auth(),
+        json={"network_name": "ClassLab", "bind_host": "10.1.2.1", "client_cidr": "192.168.137.0/24"},
+    )
+    assert outside.status_code == 400
+    assert outside.json()["error"] == "bind_outside_range"
+    saved = client.post(
+        f"/api/rooms/{room_id}/presence/bind",
+        headers=_auth(),
+        json={
+            "network_name": "ClassLab",
+            "bind_host": "192.168.2.1",
+            "bind_port": 8787,
+            "client_cidr": "192.168.2.0/24",
+        },
+    )
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["bind_host"] == "192.168.2.1"
+    assert body["client_cidr"] == "192.168.2.0/24"
+    assert body["network_name"] == "ClassLab"
+    assert body["bind_url"] == "http://192.168.2.1:8787"
+    assert "not every private address" in " ".join(body["diagnostics"])
+    again = client.get(f"/api/rooms/{room_id}/presence", headers=_auth()).json()
+    assert again["client_cidr"] == "192.168.2.0/24"
+    assert again["network_name"] == "ClassLab"
+    missing = client.post(
+        f"/api/rooms/{room_id}/roster/identify",
+        json={"entry_id": "none", "pin": "0000", "attempt": "x"},
+    )
+    # No group selected, so identity fails closed before presence. Configure the group and omit the range.
+    _import(client, room_id)
+    client.post(f"/api/rooms/{room_id}/roster/group", headers=_auth(), json={"group": "3"})
+    client.post(f"/api/rooms/{room_id}/presence/pair", headers=_auth())
+    # Saving a range then clearing is not supported; a room with no successful save stays unavailable.
+    fresh = _room(client)
+    _import(client, fresh)
+    client.post(f"/api/rooms/{fresh}/roster/group", headers=_auth(), json={"group": "3"})
+    client.post(f"/api/rooms/{fresh}/presence/pair", headers=_auth())
+    dana = next(item for item in _names(client, fresh) if item["display"] == "דנה לוי")
+    identified = client.post(
+        f"/api/rooms/{fresh}/roster/identify",
+        json={"entry_id": dana["id"], "pin": "6789", "attempt": "noreange"},
+    ).json()
+    assert identified["presence"] == "unavailable"
+    assert "challenge_id" not in identified
+
+
+def test_forwarded_header_cannot_bypass_the_configured_range():
+    _application, client = _client()
+    room_id = _room(client)
+    helper = _arm(client, room_id)
+    dana = next(item for item in _names(client, room_id) if item["display"] == "דנה לוי")
+    identified = client.post(
+        f"/api/rooms/{room_id}/roster/identify",
+        json={"entry_id": dana["id"], "pin": "6789", "attempt": "hdr"},
+    ).json()
+    outside = _observe_peer(client, room_id, helper, identified["challenge_id"], "8.8.8.8", forwarded="192.168.137.40")
+    assert outside.status_code == 403
+    assert outside.json()["error"] == "peer_out_of_range"
+    other_lan = _observe_peer(client, room_id, helper, identified["challenge_id"], "192.168.1.20", forwarded="192.168.137.40")
+    assert other_lan.status_code == 403
+    wrong_nic = _observe_peer(
+        client, room_id, helper, identified["challenge_id"], "192.168.137.40", local="10.1.1.1", forwarded="192.168.137.40"
+    )
+    assert wrong_nic.status_code == 403
+    assert wrong_nic.json()["error"] == "wrong_interface"
+    accepted = _observe_peer(
+        client, room_id, helper, identified["challenge_id"], "192.168.137.40", forwarded="8.8.8.8"
+    )
+    assert accepted.status_code == 200, accepted.text
+    sheet = client.get(f"/api/rooms/{room_id}/roster", headers=_auth()).json()
+    row = next(item for item in sheet["entries"] if item["id"] == dana["id"])
+    assert row["in_class"] is False
+
+
+def _observe_peer(client, room_id, helper, challenge_id, peer, local="192.168.137.1", forwarded=""):
+    import secrets
+    import time
+
+    from app.presence import sign_helper
+    from app.session_keys import canonical_message, decode_secret
+
+    path = f"/api/rooms/{room_id}/presence/observe"
+    raw = json.dumps(
+        {"challenge_id": challenge_id, "local": local, "peer": peer, "ssid": "SpoofedLab", "ip": forwarded},
+        separators=(",", ":"),
+    ).encode()
+    stamp = str(int(time.time()))
+    nonce = secrets.token_hex(16)
+    signature = sign_helper(decode_secret(helper["helper_key"]), canonical_message("POST", path, raw, stamp, nonce))
+    return client.post(
+        path,
+        content=raw,
+        headers={
+            "content-type": "application/json",
+            "x-zoomoodle-session": helper["helper_id"],
+            "x-zoomoodle-timestamp": stamp,
+            "x-zoomoodle-nonce": nonce,
+            "x-zoomoodle-signature": signature,
+            "x-forwarded-for": forwarded or "203.0.113.50",
+        },
+    )
+
+
+def test_real_socket_peer_and_interface_are_what_the_helper_checks():
+    import threading
+    from http.client import HTTPConnection
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from app.session_keys import encode_secret
+    from helper.presence_helper import PresenceHelper, serve
+
+    seen = []
+
+    class Sink(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("content-length") or 0)
+            seen.append(self.rfile.read(length).decode())
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args):
+            return
+
+    sink = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
+    threading.Thread(target=sink.serve_forever, daemon=True).start()
+    sink_url = f"http://127.0.0.1:{sink.server_address[1]}"
+    key = encode_secret(b"\x44" * 32)
+
+    inside = PresenceHelper("127.0.0.1", sink_url, "room", "hid", key, "http://127.0.0.1:9", client_cidr="127.0.0.1/32")
+    inside_server = serve(inside, 0)
+    threading.Thread(target=inside_server.serve_forever, daemon=True).start()
+    connection = HTTPConnection("127.0.0.1", inside_server.server_address[1], timeout=3)
+    connection.request("GET", "/prove?c=" + ("ab" * 16), headers={"X-Forwarded-For": "8.8.8.8", "X-Real-IP": "192.168.137.50"})
+    response = connection.getresponse()
+    assert response.status == 302
+    assert inside.observations == 1
+    assert '"peer":"127.0.0.1"' in seen[-1]
+    assert '"local":"127.0.0.1"' in seen[-1]
+    assert "8.8.8.8" not in seen[-1]
+
+    outside = PresenceHelper("127.0.0.2", sink_url, "room", "hid", key, "http://127.0.0.1:9", client_cidr="127.0.0.2/32")
+    outside_server = serve(outside, 0)
+    threading.Thread(target=outside_server.serve_forever, daemon=True).start()
+    before = len(seen)
+    foreign = HTTPConnection("127.0.0.2", outside_server.server_address[1], timeout=3)
+    foreign.request("GET", "/prove?c=" + ("cd" * 16), headers={"X-Forwarded-For": "127.0.0.2"})
+    denied = foreign.getresponse()
+    assert denied.status == 403
+    assert outside.observations == 0
+    assert len(seen) == before
+    sink.shutdown()
+    inside_server.shutdown()
+    outside_server.shutdown()

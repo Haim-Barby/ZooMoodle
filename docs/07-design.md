@@ -96,7 +96,7 @@ sequenceDiagram
 
 A body field `ssid` or `ip` does not satisfy `observe`. Closing the room revokes the helper and the student session. Relay through someone who is already on the hotspot is still possible; the proof is the network path to the helper, not the person and not the physical room.
 
-Tested: import minimization, group and duplicate handling, pin lockout, forged helper MAC, expiry, replay, cross-room, cross-student, revoke, close, remote without a checkmark, and a helper decision that rejects the wrong interface. The launcher plan is tested without changing a network. Not tested: macOS, Windows, iOS Safari, Android Chrome, or a real hotspot. Setup steps and those limits are in [hotspot presence](12-hotspot-presence.md).
+Tested: import minimization, group and duplicate handling, pin lockout, forged helper MAC, expiry, replay, cross-room, cross-student, revoke, close, remote without a checkmark, a real socket outside the configured range, and a forged forwarding header that does not widen that range. The launcher plan is tested without changing a network. Not tested: macOS, Windows, iOS Safari, Android Chrome, or a real hotspot. Setup steps and those limits are in [hotspot presence](12-hotspot-presence.md).
 
 ### Remote check-in
 

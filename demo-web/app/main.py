@@ -258,10 +258,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         room = _room(app, room_id)
         body = await _json(request)
         try:
-            url = room.presence.set_bind_url(str(body.get("url") or ""))
+            return room.presence.set_network(
+                str(body.get("network_name") or ""),
+                str(body.get("bind_host") or ""),
+                str(body.get("client_cidr") or ""),
+                body.get("bind_port") or 8787,
+            )
         except PresenceError as exc:
             raise StoreError(exc.reason, 400) from exc
-        return {"bind_url": url}
 
     @app.get("/api/rooms/{room_id}/presence")
     def presence_status(room_id: str, request: Request):
@@ -291,7 +295,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.headers.get("x-zoomoodle-timestamp", ""),
             )
         except PresenceError as exc:
-            status = 401 if exc.reason in {"bad_helper", "session_expired", "session_replay"} else 409
+            if exc.reason in {"bad_helper", "session_expired", "session_replay"}:
+                status = 401
+            elif exc.reason in {"wrong_interface", "peer_out_of_range"}:
+                status = 403
+            elif exc.reason in {"missing_network", "bad_network", "bind_outside_range", "range_too_wide", "public_range"}:
+                status = 400
+            else:
+                status = 409
             raise StoreError(exc.reason, status) from exc
         return {"ok": True}
 

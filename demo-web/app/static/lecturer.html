@@ -143,12 +143,20 @@ Confidentiality</textarea>
           </div>
           <p id="helper-status" class="note" role="status">Helper key is shown once in the box below and is not saved in this page.</p>
           <input id="helper-key" type="password" readonly autocomplete="off" placeholder="Key appears here once">
-          <label for="bind-url">Verifier address on the hotspot</label>
-          <input id="bind-url" placeholder="http://192.168.137.1:8787" autocomplete="off">
-          <button id="save-bind" class="secondary" type="button">Save verifier address</button>
+          <label for="network-name">Network name</label>
+          <input id="network-name" autocomplete="off" placeholder="Label for the Wi-Fi QR only">
+          <label for="bind-host">Verifier address on that network</label>
+          <input id="bind-host" autocomplete="off" placeholder="192.168.137.1 or 192.168.2.1">
+          <label for="bind-port">Verifier port</label>
+          <input id="bind-port" inputmode="numeric" value="8787">
+          <label for="client-cidr">Addresses the hotspot gives phones</label>
+          <input id="client-cidr" autocomplete="off" placeholder="192.168.137.0/24 or 192.168.2.0/24">
+          <button id="save-bind" class="secondary" type="button">Save network check</button>
+          <p id="network-diagnostics" class="note" role="status"></p>
+          <p class="note">Windows Mobile Hotspot is often 192.168.137.1 and 192.168.137.0/24. macOS Internet Sharing is often 192.168.2.1 and 192.168.2.0/24. A missing or wider range is rejected.</p>
           <h2>Step 1 — Wi-Fi only</h2>
-          <p class="note">The phone asks the operating system before joining. This QR is drawn here and is not sent to the server.</p>
-          <label for="wifi-ssid">Network name</label>
+          <p class="note">The phone asks the operating system before joining. The password is drawn into the QR on this page and is not sent to the server. The name is not proof that a phone joined.</p>
+          <label for="wifi-ssid">Network name on the QR</label>
           <input id="wifi-ssid" autocomplete="off">
           <label for="wifi-password">Network password</label>
           <input id="wifi-password" type="password" autocomplete="off">

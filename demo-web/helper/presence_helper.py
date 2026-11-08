@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from app.network_range import NetworkConfigError, address_in_network, validate_hotspot
 from app.presence import derive_helper_verifier, sign_helper
 from app.session_keys import canonical_message, decode_secret
 
@@ -38,10 +39,26 @@ def student_return(public_origin: str, room_id: str, challenge_id: str) -> str:
 
 
 class PresenceHelper:
-    def __init__(self, bind_host: str, server: str, room_id: str, helper_id: str, helper_key: str, public_origin: str):
+    def __init__(
+        self,
+        bind_host: str,
+        server: str,
+        room_id: str,
+        helper_id: str,
+        helper_key: str,
+        public_origin: str,
+        client_cidr: str = "",
+    ):
         if bind_host in REFUSED_BINDS:
             raise ValueError("bind must be one interface address, not every interface")
-        self.bind_host = bind_host
+        if not client_cidr:
+            raise ValueError("client range is required")
+        try:
+            network, bind = validate_hotspot(bind_host, client_cidr)
+        except NetworkConfigError as exc:
+            raise ValueError(exc.reason) from exc
+        self.bind_host = str(bind)
+        self.client_network = network
         self.server = server.rstrip("/")
         self.room_id = room_id
         self.helper_id = helper_id
@@ -51,18 +68,24 @@ class PresenceHelper:
         self._verifier = derive_helper_verifier(decode_secret(helper_key))
         self.observations = 0
 
-    def prove(self, challenge_id: str, sockname: tuple) -> tuple[int, str]:
+    def prove(self, challenge_id: str, sockname: tuple, peername: tuple) -> tuple[int, str]:
         if not connection_matches_bind(sockname, self.bind_host):
+            return 403, ""
+        peer = str(peername[0] if peername else "")
+        if not address_in_network(peer, self.client_network):
             return 403, ""
         if not challenge_id or len(challenge_id) > 80:
             return 400, ""
-        self._observe(challenge_id)
+        self._observe(challenge_id, self.bind_host, peer)
         self.observations += 1
         return 302, student_return(self.public_origin, self.room_id, challenge_id)
 
-    def _observe(self, challenge_id: str) -> None:
+    def _observe(self, challenge_id: str, local: str, peer: str) -> None:
         path = f"/api/rooms/{self.room_id}/presence/observe"
-        body = json.dumps({"challenge_id": challenge_id}, separators=(",", ":")).encode("utf-8")
+        body = json.dumps(
+            {"challenge_id": challenge_id, "local": local, "peer": peer},
+            separators=(",", ":"),
+        ).encode("utf-8")
         stamp = str(int(time.time()))
         nonce = secrets.token_hex(16)
         message = canonical_message("POST", path, body, stamp, nonce)
@@ -101,7 +124,11 @@ class _Handler(BaseHTTPRequestHandler):
             if part.startswith("c="):
                 challenge_id = part[2:]
         try:
-            status, location = self.helper.prove(challenge_id, self.connection.getsockname())
+            status, location = self.helper.prove(
+                challenge_id,
+                self.connection.getsockname(),
+                self.connection.getpeername(),
+            )
         except Exception:
             self.send_error(502)
             return

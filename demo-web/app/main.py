@@ -18,6 +18,10 @@ from app.attendance import CheckInError
 from app.config import Settings
 from app.export_svc import ExportService
 from app.llm.agent import AgentError, HomeworkReviewService, SummaryService
+from app.llm.providers import ChatMessage
+from app.presence import PresenceError
+from app.roster import RosterError
+from app.sources import add_source, prompt_for_model, search_sources
 from app.llm.providers import (
     KEY_OPTIONAL,
     KNOWN_PROVIDERS,
@@ -146,7 +150,215 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def remote_join(room_id: str):
         room = _open_room(app, room_id)
         record = room.attendance.mark_remote(room.attendance.tokens.now())
-        return {"mode": "remote", "marker": record.attendance_id, **_issue_session(room, record.attendance_id)}
+        issued = _issue_session(room, record.attendance_id)
+        return {"mode": "remote", "marker": record.attendance_id, **issued}
+
+    @app.post("/api/rooms/{room_id}/roster")
+    async def upload_roster(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        text = await _roster_text(request)
+        if len(text) > 1_000_000:
+            raise StoreError("roster_too_large", 400)
+        try:
+            return room.roster.replace_from_csv(text)
+        except RosterError as exc:
+            raise StoreError(exc.reason, 400) from exc
+
+    @app.post("/api/rooms/{room_id}/roster/group")
+    async def select_roster_group(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        body = await _json(request)
+        try:
+            return room.roster.select_group(body.get("group"), bool(body.get("include_unspecified")))
+        except RosterError as exc:
+            raise StoreError(exc.reason, 400) from exc
+
+    @app.get("/api/rooms/{room_id}/roster")
+    def lecturer_roster(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        return {
+            "group": room.roster.selected_group or "",
+            "include_unspecified": room.roster.include_unspecified,
+            "entries": room.roster.lecturer_rows(room.presence.in_class, room.presence.remote),
+        }
+
+    @app.get("/api/rooms/{room_id}/roster/names")
+    def roster_names(room_id: str):
+        room = _open_room(app, room_id)
+        return {"names": room.roster.public_names()}
+
+    @app.post("/api/rooms/{room_id}/roster/identify")
+    async def identify_student(room_id: str, request: Request):
+        room = _open_room(app, room_id)
+        body = await _json(request)
+        ip = client_ip(
+            dict(request.headers),
+            request.client.host if request.client else None,
+            app.state.settings.trusted_proxies,
+        )
+        try:
+            entry = room.roster.check_pin(
+                str(body.get("entry_id") or ""),
+                str(body.get("pin") or ""),
+                ip,
+                str(body.get("attempt") or ""),
+            )
+        except RosterError as exc:
+            raise StoreError(exc.reason, 401 if exc.reason != "identity_limited" else 429) from exc
+        issued = _issue_session(room, entry.id)
+        try:
+            challenge = room.presence.issue(room.id, entry.id, issued["session_id"])
+        except PresenceError as exc:
+            challenge = None
+            if exc.reason != "presence_unavailable":
+                raise StoreError(exc.reason, 409) from exc
+        payload = {
+            "ok": True,
+            "display": entry.display,
+            "entry_id": entry.id,
+            **issued,
+            "presence": "ready" if challenge else "unavailable",
+        }
+        if challenge is not None:
+            payload["challenge_id"] = challenge.id
+            payload["bind_url"] = room.presence.bind_url
+        return payload
+
+    @app.post("/api/rooms/{room_id}/roster/remote")
+    async def roster_remote(room_id: str, request: Request):
+        raw = await request.body()
+        room = _open_room(app, room_id)
+        session = _require_session(request, room, raw, write=True)
+        if session.student_id not in room.roster.entries:
+            raise StoreError("identity_rejected", 401)
+        room.presence.mark_remote(session.student_id)
+        record = room.attendance.mark_remote(room.attendance.tokens.now())
+        return {"mode": "remote", "marker": record.attendance_id, "in_class": False}
+
+    @app.post("/api/rooms/{room_id}/presence/pair")
+    def pair_helper(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        helper_id, helper_key = room.presence.pair()
+        return {"helper_id": helper_id, "helper_key": helper_key}
+
+    @app.post("/api/rooms/{room_id}/presence/revoke")
+    def revoke_helper(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        room.presence.revoke_helper()
+        return {"helper_paired": False}
+
+    @app.post("/api/rooms/{room_id}/presence/bind")
+    async def bind_helper(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        body = await _json(request)
+        try:
+            url = room.presence.set_bind_url(str(body.get("url") or ""))
+        except PresenceError as exc:
+            raise StoreError(exc.reason, 400) from exc
+        return {"bind_url": url}
+
+    @app.get("/api/rooms/{room_id}/presence")
+    def presence_status(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        status = room.presence.public_status()
+        status["closed"] = room.closed
+        return status
+
+    @app.post("/api/rooms/{room_id}/presence/observe")
+    async def observe_presence(room_id: str, request: Request):
+        raw = await request.body()
+        room = _room(app, room_id)
+        try:
+            room.presence.observe(
+                room.id,
+                raw,
+                canonical_message(
+                    request.method,
+                    _signed_target(request),
+                    raw,
+                    request.headers.get("x-zoomoodle-timestamp", ""),
+                    request.headers.get("x-zoomoodle-nonce", ""),
+                ),
+                request.headers.get("x-zoomoodle-signature", ""),
+                request.headers.get("x-zoomoodle-nonce", ""),
+                request.headers.get("x-zoomoodle-timestamp", ""),
+            )
+        except PresenceError as exc:
+            status = 401 if exc.reason in {"bad_helper", "session_expired", "session_replay"} else 409
+            raise StoreError(exc.reason, status) from exc
+        return {"ok": True}
+
+    @app.post("/api/rooms/{room_id}/presence/finish")
+    async def finish_presence(room_id: str, request: Request):
+        raw = await request.body()
+        room = _room(app, room_id)
+        session = _require_session(request, room, raw, write=True)
+        body = _body_dict(raw)
+        try:
+            room.presence.finish(room.id, session.id, session.student_id, str(body.get("challenge_id") or ""))
+        except PresenceError as exc:
+            raise StoreError(exc.reason, 409) from exc
+        entry = room.roster.entries.get(session.student_id)
+        display = entry.display if entry else ""
+        room.attendance.mark_hotspot(session.student_id, display, room.attendance.tokens.now())
+        return {"ok": True, "in_class": True, "display": display}
+
+    @app.post("/api/rooms/{room_id}/sources")
+    async def create_source(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        body = await _json(request)
+        source = add_source(room, str(body.get("title") or ""), str(body.get("text") or ""))
+        return {"id": source.id, "title": source.title}
+
+    @app.get("/api/rooms/{room_id}/sources")
+    def list_sources(room_id: str):
+        room = _room(app, room_id)
+        return {"sources": [{"id": source.id, "title": source.title} for source in room.sources]}
+
+    @app.post("/api/rooms/{room_id}/ask")
+    async def ask_sources(room_id: str, request: Request):
+        room = _open_room(app, room_id)
+        body = await _json(request)
+        question = str(body.get("question") or "").strip()
+        source_ids = body.get("source_ids") if isinstance(body.get("source_ids"), list) else None
+        if not question:
+            raise StoreError("missing_question")
+        searched = search_sources(room.sources, question, source_ids)
+        if not room.allow_model_qa:
+            searched["model"] = "off"
+            return searched
+        if not _llm_ready(app.state.store.llm):
+            searched["model"] = "unavailable"
+            searched["answer"] = "No model key is configured. " + searched["answer"]
+            return searched
+        prompt = prompt_for_model(room.sources, question, source_ids)
+        try:
+            result = _client_factory(app)().complete(
+                [
+                    ChatMessage("system", "You answer only from the sources the user pasted. You do not invent citations."),
+                    ChatMessage("user", prompt),
+                ],
+                [],
+            )
+        except Exception as exc:
+            raise StoreError(getattr(exc, "message", "model_unavailable"), 502) from exc
+        return {"mode": "model", "model": "on", "answer": result.text or "", "snippets": searched["snippets"]}
+
+    @app.post("/api/rooms/{room_id}/sources/model")
+    async def set_model_qa(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        body = await _json(request)
+        room.allow_model_qa = bool(body.get("enabled"))
+        return {"enabled": room.allow_model_qa, "ready": _llm_ready(app.state.store.llm)}
 
     @app.post("/api/rooms/{room_id}/lesson-settings")
     async def lesson_settings(room_id: str, request: Request):
@@ -765,6 +977,19 @@ async def _json(request: Request) -> dict:
     if not isinstance(body, dict):
         raise StoreError("expected_json", 400)
     return body
+
+
+async def _roster_text(request: Request) -> str:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        upload = form.get("file")
+        if upload is not None and hasattr(upload, "read"):
+            raw = await upload.read()
+            return raw.decode("utf-8-sig")
+        return str(form.get("text") or "")
+    body = await _json(request)
+    return str(body.get("text") or "")
 
 
 async def _transcript_text(request: Request) -> str:

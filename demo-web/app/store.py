@@ -13,6 +13,8 @@ from app.attendance import AttendanceService
 from app.domain import SEAT_ZONES, Comment, HomeworkSubmission, Poll, Question
 from app.llm.providers import LLMConfig
 from app.llm.tools import pseudonym, redact
+from app.presence import PresenceBook
+from app.roster import RoomRoster
 from app.session_keys import SessionBook
 
 
@@ -45,6 +47,8 @@ class Room:
         self.summary_draft = ""
         self.summary_published = ""
         self.sessions = SessionBook()
+        self.sources: list = []
+        self.allow_model_qa = False
 
 
 class Store:
@@ -77,6 +81,8 @@ class Store:
             self.keys.derive_room_key(salt),
             AttendanceService(self.tokens, self.settings.challenge_max_age_seconds),
         )
+        room.roster = RoomRoster(self.settings.master_secret)
+        room.presence = PresenceBook()
         self.rooms[room_id] = room
         return room
 
@@ -84,6 +90,7 @@ class Store:
         room = self.get(room_id)
         room.closed = True
         room.sessions.revoke_all()
+        room.presence.close()
         return room
 
     def get(self, room_id: str) -> Room:

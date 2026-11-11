@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_macos_never_claims_the_hotspot_started():
-    report = plan_launch(platform="darwin", opt_in=True, configured=True)
+    report = plan_launch(platform="darwin", opt_in=True, configured=True, network_ready=True)
     assert report["fully_automatic"] is False
     assert report["hotspot_started"] is False
     assert report["same_wifi_adapter"] == "not_supported"
@@ -27,6 +27,7 @@ def test_windows_opt_in_without_an_api_success_stays_manual():
         platform="win32",
         opt_in=True,
         configured=True,
+        network_ready=True,
         hotspot_result={"started": False, "reason": "adapter_DisabledByOperator"},
     )
     assert report["hotspot_started"] is False
@@ -37,8 +38,12 @@ def test_windows_opt_in_without_an_api_success_stays_manual():
         platform="win32",
         opt_in=True,
         configured=True,
+        network_ready=True,
         hotspot_result={"started": True, "reason": "api_reported_started"},
     )
+    missing = plan_launch(platform="darwin", opt_in=True, configured=True, network_ready=False)
+    assert missing["starts_verifier"] is False
+    assert "phone address range" in " ".join(missing["manual_remaining"])
     assert started["hotspot_started"] is True
     assert started["fully_automatic"] is False
     assert "adapter" in " ".join(started["manual_remaining"])

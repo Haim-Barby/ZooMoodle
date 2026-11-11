@@ -6,47 +6,44 @@ skinparam shadowing false
 
 package "Student phone (browser)" {
   [Student page] as StudentUI
-  [FSK decoder] as Decoder
-  [Device key in localStorage] as DeviceKey
+  [Camera / QR decoder] as Cam
 }
 
-package "Lecturer laptop (browser)" {
+package "Lecturer laptop" {
   [Lecturer page] as LecturerUI
-  [FSK player] as Player
+  [Flickering barcode] as Barcode
+  [Local presence helper] as Helper
 }
 
 package "ZooMoodle server" {
   [HTTP API] as API
   [Room store] as Store
   [KeyManager] as Keys
-  [TokenService] as Tokens
+  [RoomRoster] as Roster
+  [ScreenQrService] as ScreenQr
+  [Network range] as Range
   [AttendanceService] as Attendance
-  [DeviceBinding] as Binding
-  [AnomalyDetector] as Anomalies
   [ExportService] as Export
   [LessonAgent] as Agent
-  [Tool registry] as Tools
   [LLMClient] as Client
-  [AttentionAggregator] as Attention
 }
 
-cloud "LLM provider\n(OpenAI, Anthropic, Gemini,\nxAI, Ollama, compatible)" as Provider
+cloud "LLM provider" as Provider
 
-StudentUI --> API : check-in, poll, comment, homework
-LecturerUI --> API : room, token, export, agent, LLM test
-Decoder --> StudentUI
-Player --> LecturerUI
-DeviceKey --> StudentUI
+StudentUI --> API : identify, barcode, poll,\ncomment, homework
+LecturerUI --> API : room, roster, barcode,\nexport, agent, LLM test
+Cam --> StudentUI
+Barcode --> LecturerUI
+StudentUI --> Helper : /prove
+Helper --> API : observe
 API --> Store
 Store --> Keys
-Store --> Tokens
+Store --> Roster
+Store --> ScreenQr
 Store --> Attendance
-Attendance --> Binding
-Attendance --> Anomalies
+Attendance --> Range
 API --> Export
 API --> Agent
-Agent --> Tools
 Agent --> Client
-Tools --> Attention
-Client --> Provider : tool-calling HTTPS\nkey in a header only
+Client --> Provider : tool-calling HTTPS
 @enduml

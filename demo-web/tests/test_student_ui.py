@@ -78,3 +78,25 @@ def test_check_in_uses_a_three_by_three_map_and_the_lesson_has_no_zone_picker():
     assert "holder.appendChild" not in script
     remote = script.split('"#remote"')[1].split('"#listen"')[0]
     assert "seat" not in remote
+
+def test_student_page_vendors_jsqr_and_has_the_rotating_scanner():
+    client = TestClient(create_app(make_settings()))
+    student = client.get("/student")
+    assert "/static/jsqr.js" in student.text
+    assert 'id="scan-screen-qr"' in student.text
+    assert 'id="screen-qr-scanner"' in student.text
+    assert 'id="email"' in student.text
+    assert 'id="pin"' not in student.text
+    assert "4 ספרות" not in student.text
+    assert "ארבע הספרות" not in student.text
+    assert client.get("/static/jsqr.js").status_code == 200
+    script = (ROOT / "app" / "static" / "student.js").read_text(encoding="utf-8")
+    assert "jsQR(" in script
+    assert "presence/screen-qr" in script
+    lecturer = (ROOT / "app" / "static" / "lecturer.html").read_text(encoding="utf-8")
+    assert 'id="screen-qr"' in lecturer
+    assert 'id="screen-qr-flicker"' in lecturer
+    assert "ברקוד רץ" in lecturer
+    assert "שתי שניות" in (ROOT / "app" / "static" / "student.html").read_text(encoding="utf-8")
+    assert "qr_static" in script
+    assert "holdSeconds" in script

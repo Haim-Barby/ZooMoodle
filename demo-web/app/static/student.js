@@ -120,7 +120,7 @@ const ERROR_TEXT = {
   session_revoked: "This lesson is closed. Your session key no longer works.",
   session_required: "Check in again. This action needs your session key.",
   session_mismatch: "That action does not match this phone's session.",
-  identity_rejected: "השם או ארבע הספרות לא התקבלו.",
+  identity_rejected: "השם או כתובת המייל לא התקבלו.",
   identity_limited: "יותר מדי ניסיונות. נסו שוב מאוחר יותר.",
   presence_required: "עדיין אין הוכחה שהטלפון הגיע למאמת של המרצה.",
   presence_expired: "בדיקת הרשת פגה. נסו שוב.",
@@ -128,6 +128,13 @@ const ERROR_TEXT = {
   presence_unavailable: "המאמת המקומי לא פועל.",
   presence_closed: "השיעור נסגר. אי אפשר לסמן נוכחות.",
   presence_mismatch: "הבדיקה לא שייכת לטלפון הזה.",
+  qr_required: "עדיין צריך לסרוק את הברקוד החי על המסך.",
+  qr_stale: "הברקוד כבר ישן מדי. כוונו שוב למסך החי למשך שתי שניות.",
+  qr_replay: "הברקוד הזה כבר שומש. סרקו את המסך החי מחדש.",
+  qr_mismatch: "הברקוד לא שייך לחדר הזה או אינו תקין.",
+  qr_sequence: "הרצף שנסרק לא תואם את התנועה על המסך. סרקו שוב שתי שניות.",
+  qr_static: "התמונה לא זזה. צריך לכוון את המצלמה לברקוד החי על המסך, לא לצילום.",
+  qr_short: "צריך להחזיק את המצלמה על הברקוד החי במשך שתי שניות.",
   bad_helper: "המאמת המקומי לא מזוהה.",
   unknown_question: "That question is no longer available.",
   missing_homework: "Enter your student id and paste an answer first.",
@@ -742,6 +749,164 @@ document.querySelector("#scan").addEventListener("click", async () => {
   }
 });
 
+
+const screenQr = { stream: null, timer: null, codes: [], lastRaw: "", needed: 5, required: true, holdSeconds: 2, firstAt: 0, submitting: false };
+
+function stopScreenQrScan() {
+  if (screenQr.timer) window.clearTimeout(screenQr.timer);
+  screenQr.timer = null;
+  if (screenQr.stream) screenQr.stream.getTracks().forEach((track) => track.stop());
+  screenQr.stream = null;
+  const video = document.querySelector("#screen-qr-scanner");
+  if (video) {
+    video.srcObject = null;
+    video.hidden = true;
+  }
+  const stop = document.querySelector("#stop-screen-qr");
+  if (stop) stop.hidden = true;
+}
+
+function setScreenQrProgress(text) {
+  const node = document.querySelector("#screen-qr-progress");
+  if (node) node.textContent = text;
+}
+
+function showScreenQrPanel(visible, needed, holdSeconds) {
+  const panel = document.querySelector("#screen-qr-panel");
+  if (panel) panel.hidden = !visible;
+  if (needed) screenQr.needed = needed;
+  if (holdSeconds) screenQr.holdSeconds = holdSeconds;
+  if (visible && !sessionStorage.getItem("zoomoodle-qr-ready")) {
+    setScreenQrProgress("0.0/" + screenQr.holdSeconds + " שנ׳. ממתינים לסריקה.");
+  }
+}
+
+function screenQrHeldSeconds() {
+  if (!screenQr.firstAt) return 0;
+  return Math.max(0, (performance.now() - screenQr.firstAt) / 1000);
+}
+
+function describeScreenQrProgress() {
+  const held = screenQrHeldSeconds();
+  return held.toFixed(1) + "/" + screenQr.holdSeconds + " שנ׳ · " + screenQr.codes.length + " קודים";
+}
+
+function extractScreenQrCode(raw) {
+  const text = String(raw || "").trim();
+  const found = text.match(/ZM1\.[A-Za-z0-9_-]+/);
+  return found ? found[0] : "";
+}
+
+function decodeScreenQrFrame(video) {
+  if (!video || video.readyState < 2) return "";
+  const width = video.videoWidth || 0;
+  const height = video.videoHeight || 0;
+  if (!width || !height) return "";
+  if (!screenQr.canvas) {
+    screenQr.canvas = document.createElement("canvas");
+    screenQr.ctx = screenQr.canvas.getContext("2d", { willReadFrequently: true });
+  }
+  const maxSide = 640;
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  screenQr.canvas.width = Math.max(1, Math.floor(width * scale));
+  screenQr.canvas.height = Math.max(1, Math.floor(height * scale));
+  screenQr.ctx.drawImage(video, 0, 0, screenQr.canvas.width, screenQr.canvas.height);
+  const image = screenQr.ctx.getImageData(0, 0, screenQr.canvas.width, screenQr.canvas.height);
+  if (typeof jsQR !== "function") return "";
+  const result = jsQR(image.data, image.width, image.height, { inversionAttempts: "dontInvert" });
+  return result && result.data ? extractScreenQrCode(result.data) : "";
+}
+
+async function submitScreenQr(codes) {
+  const room = roomInput.value.trim();
+  loadStudentSession();
+  const response = await signedFetch("/api/rooms/" + encodeURIComponent(room) + "/presence/screen-qr", {
+    method: "POST",
+    body: JSON.stringify({ codes: codes }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    screenQr.codes = [];
+    screenQr.lastRaw = "";
+    screenQr.firstAt = 0;
+    screenQr.submitting = false;
+    setScreenQrProgress(explain(body.error, "הסריקה נכשלה. כוונו שוב לברקוד החי לשתי שניות."));
+    return false;
+  }
+  sessionStorage.setItem("zoomoodle-qr-ready", "1");
+  setScreenQrProgress("הברקוד החי התקבל. עכשיו צריך את בדיקת הרשת.");
+  stopScreenQrScan();
+  maybeFinishPresence();
+  return true;
+}
+
+function maybeFinishPresence() {
+  const challenge = sessionStorage.getItem("zoomoodle-challenge") || "";
+  const pending = sessionStorage.getItem("zoomoodle-presence-pending") === "1";
+  const qrReady = sessionStorage.getItem("zoomoodle-qr-ready") === "1";
+  const required = sessionStorage.getItem("zoomoodle-qr-required") !== "0";
+  if (pending && challenge && (!required || qrReady)) {
+    finishPresence(challenge).catch((err) => {
+      const note = document.querySelector("#identity-status");
+      if (note) note.textContent = err.message;
+    });
+  }
+}
+
+async function startScreenQrScan() {
+  const note = document.querySelector("#identity-status");
+  if (typeof jsQR !== "function") {
+    setScreenQrProgress("הדפדפן לא יכול לפענח ברקוד בלי הסורק המקומי.");
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setScreenQrProgress("הדפדפן לא נותן גישה למצלמה. צריך HTTPS או localhost.");
+    return;
+  }
+  try {
+    stopScreenQrScan();
+    screenQr.codes = [];
+    screenQr.lastRaw = "";
+    screenQr.firstAt = 0;
+    screenQr.submitting = false;
+    sessionStorage.removeItem("zoomoodle-qr-ready");
+    screenQr.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    const video = document.querySelector("#screen-qr-scanner");
+    video.srcObject = screenQr.stream;
+    video.hidden = false;
+    document.querySelector("#stop-screen-qr").hidden = false;
+    setScreenQrProgress("0.0/" + screenQr.holdSeconds + " שנ׳. כוונו את המצלמה לברקוד החי.");
+    const tick = () => {
+      const raw = decodeScreenQrFrame(video);
+      if (raw && raw !== screenQr.lastRaw) {
+        screenQr.lastRaw = raw;
+        if (screenQr.codes[screenQr.codes.length - 1] !== raw) {
+          if (!screenQr.firstAt) screenQr.firstAt = performance.now();
+          screenQr.codes.push(raw);
+        }
+      }
+      if (screenQr.firstAt && !screenQr.submitting) {
+        setScreenQrProgress(describeScreenQrProgress());
+        const held = screenQrHeldSeconds();
+        if (held >= screenQr.holdSeconds) {
+          screenQr.submitting = true;
+          const batch = screenQr.codes.slice();
+          submitScreenQr(batch).catch((err) => {
+            screenQr.submitting = false;
+            setScreenQrProgress(err.message);
+          });
+          return;
+        }
+      }
+      screenQr.timer = window.setTimeout(tick, 80);
+    };
+    screenQr.timer = window.setTimeout(tick, 80);
+  } catch (err) {
+    setScreenQrProgress(err.message);
+    if (note) note.textContent = err.message;
+  }
+}
+
 function attemptId() {
   let id = sessionStorage.getItem("zoomoodle-attempt");
   if (!id) {
@@ -769,12 +934,12 @@ async function loadRosterNames() {
 }
 
 document.querySelector("#identify").addEventListener("click", async () => {
-  const pinBox = document.querySelector("#pin");
-  const pin = pinBox.value.trim();
-  pinBox.value = "";
+  const emailBox = document.querySelector("#email");
+  const email = emailBox.value.trim();
+  emailBox.value = "";
   const note = document.querySelector("#identity-status");
-  if (!/^\d{4}$/.test(pin)) {
-    note.textContent = "צריך בדיוק 4 ספרות.";
+  if (!email || !email.includes("@")) {
+    note.textContent = "צריך להזין את כתובת המייל.";
     return;
   }
   const room = roomInput.value.trim();
@@ -783,7 +948,7 @@ document.querySelector("#identify").addEventListener("click", async () => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       entry_id: document.querySelector("#roster-name").value,
-      pin: pin,
+      email: email,
       attempt: attemptId(),
     }),
   });
@@ -795,16 +960,34 @@ document.querySelector("#identify").addEventListener("click", async () => {
   rememberSession(room, body.session_id, body.session_key, body.entry_id);
   sessionStorage.setItem("zoomoodle-display", body.display || "");
   sessionStorage.removeItem("zoomoodle-present");
+  sessionStorage.removeItem("zoomoodle-qr-ready");
+  sessionStorage.removeItem("zoomoodle-presence-pending");
   document.querySelector("#roster-remote").hidden = false;
+  screenQr.required = body.qr_required !== false;
+  sessionStorage.setItem("zoomoodle-qr-required", screenQr.required ? "1" : "0");
+  if (body.qr_needed) screenQr.needed = body.qr_needed;
+  if (body.qr_min_distinct) screenQr.needed = body.qr_min_distinct;
+  if (body.qr_hold_seconds) screenQr.holdSeconds = body.qr_hold_seconds;
+  showScreenQrPanel(screenQr.required, screenQr.needed, screenQr.holdSeconds);
   if (body.presence === "ready" && body.bind_url && body.challenge_id) {
     sessionStorage.setItem("zoomoodle-bind", body.bind_url);
     sessionStorage.setItem("zoomoodle-challenge", body.challenge_id);
     document.querySelector("#prove-network").hidden = false;
-    note.textContent = "הזהות התקבלה. עדיין אין סימון עד שהטלפון מגיע למאמת.";
+    note.textContent = screenQr.required
+      ? "הזהות התקבלה. החזיקו את המצלמה על הברקוד החי שתי שניות, ואז פתחו את המאמת המקומי. אין סימון לפני שניהם."
+      : "הזהות התקבלה. עדיין אין סימון עד שהטלפון מגיע למאמת.";
   } else {
     document.querySelector("#prove-network").hidden = true;
     note.textContent = "הזהות התקבלה, אבל המאמת המקומי לא פועל. אין סימון נוכחות.";
   }
+});
+
+document.querySelector("#scan-screen-qr").addEventListener("click", () => {
+  startScreenQrScan();
+});
+document.querySelector("#stop-screen-qr").addEventListener("click", () => {
+  stopScreenQrScan();
+  setScreenQrProgress("המצלמה נעצרה.");
 });
 
 document.querySelector("#prove-network").addEventListener("click", () => {
@@ -841,10 +1024,19 @@ async function finishPresence(challengeId) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !body.in_class) {
     const note = document.querySelector("#identity-status");
-    if (note) note.textContent = explain(body.error, "אין סימון נוכחות.");
+    const reason = body.error || "";
+    if (reason === "qr_required") {
+      sessionStorage.setItem("zoomoodle-presence-pending", "1");
+      showStep("identity");
+      showScreenQrPanel(true, screenQr.needed, screenQr.holdSeconds);
+      if (note) note.textContent = explain(reason, "עדיין צריך לסרוק את הברקוד החי.");
+      return;
+    }
+    if (note) note.textContent = explain(reason, "אין סימון נוכחות.");
     showStep("identity");
     return;
   }
+  sessionStorage.removeItem("zoomoodle-presence-pending");
   sessionStorage.setItem("zoomoodle-present", "1");
   if (body.display) sessionStorage.setItem("zoomoodle-display", body.display);
   history.replaceState(null, "", location.pathname + location.search);
@@ -919,6 +1111,16 @@ document.querySelector("#ask-send").addEventListener("click", async () => {
   const paramsNow = new URLSearchParams(location.search);
   if (paramsNow.get("room")) roomInput.value = paramsNow.get("room");
   loadStudentSession();
+  sessionStorage.setItem("zoomoodle-challenge", challenge);
+  sessionStorage.setItem("zoomoodle-presence-pending", "1");
+  const required = sessionStorage.getItem("zoomoodle-qr-required") !== "0";
+  const qrReady = sessionStorage.getItem("zoomoodle-qr-ready") === "1";
+  if (required && !qrReady) {
+    showStep("identity");
+    showScreenQrPanel(true, screenQr.needed);
+    document.querySelector("#identity-status").textContent = "הרשת התקבלה. עדיין צריך לסרוק את הברקוד הרץ.";
+    return;
+  }
   finishPresence(challenge).catch((err) => {
     document.querySelector("#identity-status").textContent = err.message;
   });

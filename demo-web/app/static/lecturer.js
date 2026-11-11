@@ -114,6 +114,16 @@ function showRoom(room) {
   qr.hidden = !svg;
   document.querySelector("#live-pill").textContent = room.closed ? "Closed" : "Live";
   loadSummaryEditor().catch(() => {});
+  loadNetwork().catch(() => {});
+}
+
+async function loadNetwork() {
+  if (!state.roomId) return;
+  try {
+    const presence = await api("/api/rooms/" + state.roomId + "/presence");
+    showNetwork(presence);
+    showScreenQrSetting(presence);
+  } catch (_err) { /* the room may not be paired yet */ }
 }
 
 async function loadSummaryEditor() {
@@ -923,15 +933,184 @@ document.querySelector("#revoke-helper").addEventListener("click", async () => {
   }
 });
 
+function showScreenQrSetting(body) {
+  if (!body) return;
+  const toggle = document.querySelector("#screen-qr-toggle");
+  if (toggle && typeof body.qr_required === "boolean") toggle.checked = body.qr_required;
+  const status = document.querySelector("#screen-qr-status");
+  if (status) {
+    status.textContent = body.qr_required === false
+      ? "The flickering barcode is off. The checkmark uses the network verifier only."
+      : "The flickering barcode is on. Students must hold the camera on the live screen for 2 seconds. A still photo is rejected. Each decoded frame is checked against the server clock.";
+  }
+}
+
+function hash32(text) {
+  let h = 2166136261;
+  const raw = String(text || "");
+  for (let i = 0; i < raw.length; i += 1) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function paintScreenQrFlicker(nowMs) {
+  const canvas = document.querySelector("#screen-qr-flicker");
+  const frame = document.querySelector("#screen-qr-frame");
+  if (!canvas || !frame || !state.flickerSeed) return;
+  const hz = state.flickerHz || 20;
+  const tick = Math.floor((Number(nowMs) / 1000) * hz);
+  const width = frame.clientWidth || 0;
+  const height = frame.clientHeight || 0;
+  if (!width || !height) return;
+  const ratio = window.devicePixelRatio || 1;
+  const pxW = Math.max(1, Math.floor(width * ratio));
+  const pxH = Math.max(1, Math.floor(height * ratio));
+  if (canvas.width !== pxW || canvas.height !== pxH) {
+    canvas.width = pxW;
+    canvas.height = pxH;
+    state.flickerTick = -1;
+  }
+  if (tick === state.flickerTick) return;
+  state.flickerTick = tick;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  const rng = mulberry32(hash32(state.flickerSeed + ":" + tick));
+  const cells = 28;
+  const cell = width / cells;
+  const rows = Math.max(cells, Math.ceil(height / cell));
+  const border = 3;
+  const colors = ["#081018", "#f4fbff", "#3d9cf0", "#7cf0d0", "#ffd36a"];
+  for (let y = 0; y < rows; y += 1) {
+    for (let x = 0; x < cells; x += 1) {
+      const onBorder = x < border || y < border || x >= cells - border || y >= rows - border;
+      if (!onBorder) continue;
+      const v = rng();
+      if (v < 0.12) continue;
+      ctx.fillStyle = colors[Math.floor(v * colors.length) % colors.length];
+      ctx.fillRect(x * cell, y * cell, cell + 0.6, cell + 0.6);
+    }
+  }
+}
+
+function startScreenQrFlicker() {
+  const frame = document.querySelector("#screen-qr-frame");
+  if (frame) frame.classList.add("is-live");
+  if (state.flickerRaf) return;
+  const tick = (now) => {
+    paintScreenQrFlicker(now);
+    state.flickerRaf = window.requestAnimationFrame(tick);
+  };
+  state.flickerRaf = window.requestAnimationFrame(tick);
+}
+
+function stopScreenQrFlicker() {
+  if (state.flickerRaf) window.cancelAnimationFrame(state.flickerRaf);
+  state.flickerRaf = 0;
+  const frame = document.querySelector("#screen-qr-frame");
+  if (frame) frame.classList.remove("is-live");
+}
+
+async function refreshScreenQr() {
+  if (!state.roomId) return;
+  const stage = document.querySelector("#screen-qr-stage");
+  const box = document.querySelector("#screen-qr");
+  const meta = document.querySelector("#screen-qr-meta");
+  const codeNode = document.querySelector("#screen-qr-code");
+  const level = document.querySelector("#screen-qr-level");
+  if (!box) return;
+  const body = await api("/api/rooms/" + state.roomId + "/presence/screen-qr");
+  showScreenQrSetting(body);
+  if (stage) stage.hidden = body.qr_required === false;
+  if (body.qr_required === false) {
+    stopScreenQrFlicker();
+    return;
+  }
+  if (body.flicker_seed) state.flickerSeed = body.flicker_seed;
+  if (body.qr_flicker_hz) state.flickerHz = Number(body.qr_flicker_hz);
+  startScreenQrFlicker();
+  if (body.code && body.code !== state.screenQrCode) {
+    state.screenQrCode = body.code;
+    if (window.ZooQR) box.innerHTML = ZooQR.toSvg(body.code, 5);
+  }
+  if (codeNode) {
+    const raw = String(body.code || "");
+    codeNode.textContent = raw ? "ZM1…" + raw.slice(-8) : "—";
+  }
+  const left = Number(body.expires_in || 0);
+  const frame = Number(body.qr_frame_seconds || 0.25);
+  if (level) level.style.width = Math.max(0, Math.min(100, (left / frame) * 100)) + "%";
+  if (meta) {
+    const hold = body.qr_hold_seconds || 2;
+    const age = body.qr_max_age_seconds || 6;
+    meta.textContent = body.qr_required === false
+      ? "The flickering barcode is turned off for this room."
+      : "הברקוד מרצד על המסך. הסטודנט מחזיק את המצלמה " + hold + " שניות. צילום סטטי נדחה. השרת בודק כל קוד לפי השעה שלו, עד " + age + " שניות.";
+  }
+}
+
+function showNetwork(body) {
+  if (!body) return;
+  if (body.network_name) document.querySelector("#network-name").value = body.network_name;
+  if (body.bind_host) document.querySelector("#bind-host").value = body.bind_host;
+  if (body.bind_port) document.querySelector("#bind-port").value = body.bind_port;
+  if (body.client_cidr) document.querySelector("#client-cidr").value = body.client_cidr;
+  if (body.network_name) document.querySelector("#wifi-ssid").value = body.network_name;
+  const notes = document.querySelector("#network-diagnostics");
+  notes.textContent = (body.diagnostics || []).join(" ");
+  if (body.bind_url) {
+    document.querySelector("#helper-status").textContent = "Phones open " + body.bind_url + " only if their address is inside " + body.client_cidr + ".";
+  }
+}
+
+document.querySelector("#save-screen-qr").addEventListener("click", async () => {
+  const status = document.querySelector("#screen-qr-status");
+  try {
+    const body = await api("/api/rooms/" + state.roomId + "/presence/screen-qr/settings", {
+      method: "POST",
+      body: JSON.stringify({ required: document.querySelector("#screen-qr-toggle").checked }),
+    });
+    showScreenQrSetting(body);
+    await refreshScreenQr();
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
+
 document.querySelector("#save-bind").addEventListener("click", async () => {
+  const notes = document.querySelector("#network-diagnostics");
   try {
     const body = await api("/api/rooms/" + state.roomId + "/presence/bind", {
       method: "POST",
-      body: JSON.stringify({ url: document.querySelector("#bind-url").value }),
+      body: JSON.stringify({
+        network_name: document.querySelector("#network-name").value,
+        bind_host: document.querySelector("#bind-host").value,
+        bind_port: document.querySelector("#bind-port").value,
+        client_cidr: document.querySelector("#client-cidr").value,
+      }),
     });
-    document.querySelector("#helper-status").textContent = "Phones will open " + body.bind_url + ".";
+    showNetwork(body);
   } catch (err) {
-    document.querySelector("#helper-status").textContent = err.message;
+    const text = {
+      missing_network: "Enter both the verifier address and the phone address range.",
+      bad_network: "That address or range is not valid.",
+      bind_outside_range: "The verifier address has to be inside the phone address range.",
+      range_too_wide: "That range is too wide. Use a /24 such as 192.168.137.0/24 or 192.168.2.0/24.",
+      public_range: "Use the private range the hotspot assigns, not a public network.",
+    }[err.message] || err.message;
+    notes.textContent = text;
   }
 });
 
@@ -996,3 +1175,7 @@ setInterval(() => {
   refreshOverview().catch(() => {});
   refreshSheet().catch(() => {});
 }, 2000);
+setInterval(() => {
+  if (!state.roomId) return;
+  refreshScreenQr().catch(() => {});
+}, 80);

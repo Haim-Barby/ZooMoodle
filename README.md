@@ -2,36 +2,38 @@
 
 A simple web teaching tool for one lesson: automatic attendance with anomaly flags, student feedback, polls, and LLM-assisted lesson and homework review.
 
-Individual project for Introduction to Software Engineering (OOP/OOD), Exercise 2. A demo and the design documents are included. Real-phone trials, live model validation, and the in-class demo remain open.
+Individual project for Introduction to Software Engineering (OOP/OOD), Exercise 2. Deadline: 25 November 2026. A demo and the design documents are included. Real-phone camera and hotspot trials, live-model validation, and the in-class demo remain open.
 
-## Problem and goal
+## Problem and scope
 
-Attendance codes can be shared, and lecturers receive feedback too late to see which material confused the class. ZooMoodle aims to make attendance fraud harder and more visible, and to connect feedback to lesson topics and seat zones.
+Attendance codes can be shared, and lecturers receive feedback too late to see which material confused the class. ZooMoodle aims to make in-class presence harder to fake and more visible, and to connect feedback to lesson topics and seat zones.
 
 Students use a phone browser; the lecturer uses a laptop. The goal is an implementable end-to-end design and a real classroom demo of about ten minutes. Attendance is the main feature. The system does not claim to prevent all fraud.
 
-A class roster can add a separate in-class checkmark: the student picks a name, enters the last four id digits, and only then a phone that reached the lecturer's local verifier is marked present. Double-click launchers start that verifier after a saved setup. They do not fully provision a hotspot. See [hotspot presence](docs/12-hotspot-presence.md).
-
-## Scope
-
 Each lesson is a **Room**, with its own derived cryptographic key and its own attendance, polls, comments, homework, and transcript.
 
-| Feature | Design and demo scope |
+**In-class attendance** is a combined check:
+
+1. **Roster.** The lecturer imports a class list. The student picks a name and confirms with that person's email. The server checks a salted HMAC of the email and does not store a national id. The public name list does not show the email.
+2. **Live barcode.** The lecturer screen shows a flickering, video-like barcode: a signed QR that changes about every 250 ms, with a border that shimmers about 20 times a second from a server seed. The phone must hold the camera on that live pattern for about two seconds and collect at least five distinct frames. A still photo or screenshot is rejected (`qr_static`); a shorter capture is rejected (`qr_short`). Each code is room-bound, HMAC-signed, single-use, and checked for freshness against the server clock (6 seconds at receipt).
+3. **Network verifier.** The phone must open the lecturer's local helper from an address inside the lecturer-entered client range (no wider than /24). The helper reads the real socket peer; a claimed IP or Wi-Fi name is not enough. Double-click launchers start the helper after a saved setup. They do not fully provision a hotspot.
+4. **Admission.** Only then does the lecturer sheet show a checkmark and the phone shows a welcome (`ברוך הבא`) with that name.
+
+A classmate who live-streams the lecturer screen may still pass liveness; the network check covers a student who is not on the lecturer's network. An older ultrasonic 18/19 kHz FSK beacon and typed on-screen code remain in the demo as an optional path; they are not required for the checkmark and have not been verified on real speakers or a phone. Physical camera scanning and a real hotspot are also unverified. Setup and limits: [hotspot presence](docs/12-hotspot-presence.md).
+
+| Also in the demo | Scope |
 | --- | --- |
-| Automatic attendance | The laptop broadcasts a short-lived HMAC token as 18/19 kHz FSK. The phone decodes it through its microphone and signs a device challenge. A rotating on-screen code is the fallback. Physical speaker-to-phone reception is unverified. |
-| Attendance sheet | Separate in-class and remote rows, six seat zones, confidence, and flags for late codes, subnet mismatch, shared devices, multiple devices, and both modes. Lecturer-only CSV/XLSX export. |
-| Comments and suggestions | During or after the lesson while the server is available. Disconnected composition and later synchronization are not implemented. |
+| Attendance sheet | Separate in-class and remote rows, roster checkmarks, six seat zones, confidence, and anomaly flags. Lecturer-only CSV/XLSX export. |
+| Comments | During or after the lesson while the server is up. Offline sync is not implemented. |
 | Instant polls | Two to six options, an optional correct answer, one answer per student, and lecturer results by zone. |
-| Lesson summary | Import a UTF-8 transcript from a recording; a tool-calling agent combines it with polls, comments, and available zone aggregates. Transcription itself is external to this demo. |
-| Homework review | The same agent reviews a submission and compares it anonymously with peers. It does not assign grades. |
-| Model connection | Lecturer-selected provider, model, optional base URL, and server-side key; separate Save settings and Test connection actions. |
-| Attention map — optional extension | The demo accepts labeled sample aggregates only. A live camera pipeline is outside the demo scope. |
+| Lesson summary | Import a UTF-8 transcript; a tool-calling agent combines it with polls, comments, and zone aggregates. Transcription is external. |
+| Homework review | The same agent compares a submission anonymously with peers. It does not assign grades. |
+| Model connection | Lecturer-selected provider, model, optional base URL, and server-side key; separate Save and Test actions. |
+| Attention map | Labeled sample aggregates only. A live camera pipeline is outside the demo. |
 
-The assignment includes both LLM features. Their code paths exist, but successful real-model output has not been validated. Without a configured model, the app returns an error instead of a fabricated report.
+The LLM code paths exist, but successful real-model output has not been validated. Without a configured model, the app returns an error instead of a fabricated report.
 
-Attendance safeguards include a token valid for the current window and one grace window, one redemption per code per device, device signatures, and an optional campus-subnet signal. A fast shared photo or full-band relay can still work; see the [SRS threat model](docs/04-SRS.md#5-threat-model).
-
-Out of scope: Moodle/Zoom/personal-information integration, native mobile apps, university accounts, a durable database, face recognition, and stored classroom video. Names and student ids are stored for the lecturer; the agent uses pseudonyms and best-effort redaction.
+Out of scope: Moodle/Zoom/personal-information integration, native mobile apps, university accounts, a durable database, face recognition, and stored classroom video. The agent uses pseudonyms and best-effort redaction.
 
 ## Assignment deliverables
 
@@ -40,24 +42,22 @@ Status distinguishes a written artifact from completed validation.
 | Item | Artifact | Status |
 | --- | --- | --- |
 | 1. Problem and scope | This README | Written |
-| 2. Tools report | [Tools and recorded experiments](docs/02-tools-report.md) | VM experiments recorded; physical and live-provider checks pending |
+| 2. Tools report | [Tools and recorded experiments](docs/02-tools-report.md) | VM and Mac tests recorded; physical camera, hotspot, and live-provider checks pending |
 | 3. SoW | [Statement of work](docs/03-SoW.md) | Written |
 | 4. SRS | [Requirements and threat model](docs/04-SRS.md) | Written |
 | 5. Use cases | [Stories and acceptance criteria](docs/05-use-cases.md) | Written |
 | 6. Components | [Components and interfaces](docs/06-components.md) | Written |
-| 7. Design | [Class and sequence diagrams](docs/07-design.md) | Present; class detail can be refined |
-| 8. Test strategy | [Tests and traceability](docs/08-testing-strategy.md) | Written; coverage gaps identified |
-| 9. Demo app | `demo-web/` (`app/`, `tests/`, `requirements.txt`) | Implemented; known issues remain, see [conclusions](docs/11-conclusions.md) |
+| 7. Design | [Class and sequence diagrams](docs/07-design.md) | Written |
+| 8. Test strategy | [Tests and traceability](docs/08-testing-strategy.md) | Written; 103 automated tests passed on the owner's Mac |
+| 9. Demo app | `demo-web/` (`app/`, `tests/`, `requirements.txt`) | Implemented; physical camera and hotspot trials remain, see [conclusions](docs/11-conclusions.md) |
 | 10. Classroom demo | [Ten-minute script](docs/10-demo-script.md) | Not performed |
 | 11. Conclusions | [Results and remaining work](docs/11-conclusions.md) | Draft; classroom results pending |
 
-The [agent specification](docs/09-ai-agent.md) supports the design; it is not a twelfth assignment deliverable.
+The [agent specification](docs/09-ai-agent.md) supports the design; it is not a twelfth assignment deliverable. Hotspot setup and Render steps stay in [hotspot presence](docs/12-hotspot-presence.md) and [Deploy on Render](docs/deploy-render.md).
 
 ## Run the demo
 
-Use Python 3.12 and a virtual environment:
-
-The demo web app lives in `demo-web/`. From that directory:
+Use Python 3.12 and a virtual environment. The app lives in `demo-web/`:
 
 ```bash
 cd demo-web
@@ -73,25 +73,16 @@ Set `ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_TOKEN` in `.env`. If empty, 
 python -m app.main
 ```
 
-The lecturer page is at `http://127.0.0.1:8000/`. Phones need HTTPS for microphone access. After [installing cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), run in a second terminal:
+The lecturer page is at `http://127.0.0.1:8000/`. Phones need HTTPS for the camera (and for the optional microphone path). After [installing cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), run `cloudflared tunnel --url http://127.0.0.1:8000` in a second terminal. Open the lecturer page through the printed HTTPS URL so student links use that origin. A localhost link must have its origin replaced before sharing.
 
-```bash
-cloudflared tunnel --url http://127.0.0.1:8000
-```
+The flickering barcode is on the lecturer screen. The local verifier runs on the laptop, on the hotspot network, not through the tunnel and not on Render. Camera scanning on a real phone and a real hotspot have not been tested.
 
-Open the lecturer page through the printed HTTPS URL so its generated student links also use that origin. A link generated from localhost points to localhost on the phone and must have its origin replaced. Keep the beacon on laptop speakers. If reception fails, use the on-screen code and record that fallback separately from an acoustic success.
+The optional campus-subnet list in `.env.example` is supporting evidence only; it is not the hotspot range check. The lecturer enters the verifier address and the phone range on the lecturer page. Forwarded IP headers are accepted only from `ZOOMODLE_TRUSTED_PROXIES` (default loopback).
 
-`.env.example` configures Ariel public ranges `192.114.48.0/21,192.114.56.0/23`. The recorded egress was `192.114.52.1` on 2026-11-03. These ranges also cover dorms/VPN, so a match is supporting evidence only. Through a tunnel, private Wi-Fi addresses are not visible. Forwarded IP headers are accepted only from `ZOOMODLE_TRUSTED_PROXIES`, default loopback.
+From `demo-web/`, run `pytest`. A local run on the owner's Mac reported **103 passed**. That suite does not replace a physical camera or hotspot trial.
 
-Tests:
-
-```bash
-cd demo-web
-pytest
-```
-
-For AI, enter provider, model, and key, press **Save settings**, then **Test connection**. Test alone does not save the key and clears its input. Supported adapters: OpenAI, Anthropic, Gemini, xAI, Ollama, and other OpenAI-compatible endpoints. Keys stay in server memory or the uncommitted environment file and are omitted from configuration responses.
+For AI, enter provider, model, and key, press **Save settings**, then **Test connection**. Test alone does not save the key. Supported adapters: OpenAI, Anthropic, Gemini, xAI, Ollama, and other OpenAI-compatible endpoints. Keys stay in server memory or the uncommitted environment file and are omitted from configuration responses.
 
 ## Deploy on Render
 
-A free Web Service Blueprint is in `demo-web/render.yaml` (`rootDir: demo-web`). Steps, the lecturer token, spin-down, and the in-memory store are in [Deploy on Render](docs/deploy-render.md).
+A free Web Service Blueprint is in `demo-web/render.yaml` (`rootDir: demo-web`). Rooms live in memory, so a restart or spin-down erases them. The lecturer token is in the Render dashboard, not in git. The local verifier and the hotspot run on the laptop, not on Render. Steps: [Deploy on Render](docs/deploy-render.md).

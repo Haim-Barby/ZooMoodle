@@ -2,7 +2,8 @@
   דנה , לוי ,123456789,dana@example.test, 3 
 יוסי,כהן,987654321,yosi@example.test,3
 עמית,שמש,111122223,amit@example.test,
-עמית,שמש,111122223,dup@example.test,3
+עמית,שמש,111122223,amit@example.test,3
  , , ,,
 נועה,בר,5555,short@example.test,3
 מיה,חדד,222233334,mia@example.test, 4
+חסר,מייל,123123123,,3

@@ -1,6 +1,6 @@
 # Software requirements specification
 
-ZooMoodle, Exercise 2. This specification covers the teaching-tool design, implemented demo, and acceptance checks still to be completed.
+ZooMoodle, Exercise 2. This specification covers the teaching-tool design, the implemented demo, and acceptance checks still to be completed.
 
 ## 1. Purpose
 
@@ -8,11 +8,11 @@ Provide a simple phone-based teaching tool, prioritizing automatic attendance an
 
 ## 2. Overall description
 
-A single FastAPI process serves static lecturer and student pages and keeps room state in memory. The lecturer/operator starts the server and an HTTPS tunnel, manages the lesson, and supplies model configuration. Students check in and submit feedback or homework. An optional external LLM provider serves the lesson agent through read-only tools.
+A single FastAPI process serves static lecturer and student pages and keeps room state in memory. The lecturer starts the server (locally or on Render), an HTTPS origin for phones, and — for the roster checkmark — a local presence helper on the lecturer hotspot. Students check in and submit feedback or homework. An optional external LLM provider serves the lesson agent through read-only tools.
 
-Target environment: Python 3.12 venv, laptop speakers, and current phone browsers. Phones need HTTPS for the microphone. The lecturer should use the public HTTPS origin when generating student links. No Moodle, Zoom, or personal-information integration is required. A transcript file is prepared externally from a recording.
+Target environment: Python 3.12, a lecturer laptop, and current phone browsers. Phones need HTTPS for the camera. No Moodle, Zoom, or personal-information integration is required. A transcript file is prepared externally.
 
-Constraints: a ten-minute classroom demo, simple web controls, one process, server-side provider keys, no face recognition or saved camera frames. Attention is a labeled-sample extension. Comments require connectivity and a running server; disconnected synchronization is outside this demo.
+Constraints: a ten-minute classroom demo, simple web controls, one process, server-side provider keys, no face recognition or saved camera frames. Attention is a labeled-sample extension. Comments require a running server.
 
 ## 3. Functional requirements
 
@@ -20,51 +20,51 @@ Constraints: a ten-minute classroom demo, simple web controls, one process, serv
 | --- | --- |
 | FR-1 | An authenticated lecturer can create a titled room. The response contains a student path, with no salt or key material. |
 | FR-2 | Each room uses at least 16 random salt bytes and a 32-byte HKDF-SHA256 key derived from the master secret, salt, and info `zoomoodle-room-v1`. |
-| FR-3 | Issue a broadcast code per window (default 5 seconds): truncated HMAC-SHA256 over room id, window, and nonce, accompanied by the nonce. Show it to the lecturer and transmit it as 18/19 kHz FSK. Anonymous clients cannot fetch it. |
-| FR-4 | Check-in requires a P-256 signature over `challenge id \| nonce`. Challenges expire after 8 seconds by default and cannot be reused. |
-| FR-5 | Accept the current code or the previous window with `late_token`; reject older codes. Each device may redeem a given code once; other devices may use the same broadcast. |
-| FR-6 | Remote check-in requires no acoustic code. Generate a separate external token and store the row as `remote`. |
-| FR-7 | Require one of six seat zones: front/middle/back × left/right. |
-| FR-8 | Keep the first observed public key per device id. Flag late codes, subnet mismatch, both attendance modes, shared devices, and multiple devices per student. Preserve suspicious records for lecturer review and assign confidence `high`, `medium`, or `low`. |
-| FR-9 | For in-class rows, a client IP in `ZOOMODLE_ALLOWED_SUBNETS` is `match`, otherwise `mismatch`; an unset list gives `not_configured` without a confidence penalty. Honor forwarded headers only from `ZOOMODLE_TRUSTED_PROXIES`. From loopback, prefer `CF-Connecting-IP`. Otherwise walk `X-Forwarded-For` from the right and skip trusted proxies. A direct peer is used as-is. |
-| FR-10 | Lecturer-only CSV/XLSX export includes student id, name, mode, zone, UTC time, confidence, flags, subnet, and device id. |
-| FR-11 | Lecturers create polls with 2–6 options and an optional correct option from that list. One answer per student per poll. Students cannot see the correct option or counts by option/zone; lecturers can. |
+| FR-3 | The lecturer can import a class CSV and select a group. The server stores names, group, a per-person salt, and a salted HMAC of the student's email. It does not store a national id. The student picks a name from that list (no free typing of a new name) and confirms with that email. Repeated failures lock out. The public name list does not show the email. |
+| FR-4 | The lecturer page shows a flickering video-like barcode: a signed QR that changes about every 250 ms, and a border that shimmers about 20 times a second from a server-issued seed. The phone must hold the camera on it for about two seconds and collect at least five distinct frames. Reject a still photo or repeated frame (`qr_static`) and a capture shorter than two seconds (`qr_short`). Each frame is room-bound, HMAC-signed, single-use per student, and fresh for 6 seconds by the **server** clock at receipt. Reject a wrong-room, replayed, or largely gapped sequence. The lecturer may turn the barcode off; then the checkmark uses the network verifier only. |
+| FR-5 | The lecturer enters a network name, verifier address, and client range no wider than /24. Public ranges and a bind of `0.0.0.0` are rejected. The helper accepts a connection only on the bound address and only if the socket peer is inside the range. It ignores `X-Forwarded-For` and a client-claimed IP or Wi-Fi name. |
+| FR-6 | The roster checkmark and the welcome (`ברוך הבא` + name) appear only after FR-3, FR-4 (unless toggled off), and FR-5 all succeed for the same student session. Closing the room revokes the helper and the session. |
+| FR-7 | Remote check-in is stored as `remote`, with no roster checkmark and no barcode or helper requirement. |
+| FR-8 | Require one of six seat zones: front/middle/back × left/right. |
+| FR-9 | Flag late or reused optional-path codes, subnet mismatch, both attendance modes, shared devices, and multiple devices. Keep suspicious records and assign confidence `high`, `medium`, or `low`. A campus-subnet list, if configured, is a flag only — not the FR-5 admission gate. Honor forwarded headers only from `ZOOMODLE_TRUSTED_PROXIES`. |
+| FR-10 | Lecturer-only CSV/XLSX export includes the stored attendance fields (name, mode, zone, UTC time, confidence, flags, and device or roster identifiers as stored). It does not include a national id or the raw email. The export is not model input. |
+| FR-11 | Lecturers create polls with 2–6 options and an optional correct option from that list. One answer per student per poll. Students cannot see the correct option or counts; lecturers can, including by zone. |
 | FR-12 | Students post comments; lecturers see named comments. Agent tools use pseudonyms and redacted text. |
-| FR-13 | Import UTF-8 transcript text using JSON or multipart file upload; retain up to 200,000 characters. |
-| FR-14 | `POST /api/rooms/{id}/agent/summary` runs the [lesson agent](09-ai-agent.md). Return JSON only after report validation; otherwise return an error without a partial narrative. |
-| FR-15 | Students and lecturers can request a review by submission id, including anonymous peer comparison and `not_a_grade: true`. The review should prefer short comparisons to raw peer-text dumps. |
+| FR-13 | Import UTF-8 transcript text (JSON or file); retain up to 200,000 characters. |
+| FR-14 | `POST /api/rooms/{id}/agent/summary` runs the lesson agent. Return JSON only after report validation; otherwise return an error without a partial narrative. |
+| FR-15 | Students and lecturers can request a review by submission id, including anonymous peer comparison and `not_a_grade: true`. |
 | FR-16 | Without provider, model, and required key, summary/review routes return HTTP 503 stating that no model was called. Keys are optional for Ollama and generic compatible endpoints. |
 | FR-17 | Store provider, model, base URL, and key in process memory. `GET /api/llm/config` reports `key_configured`, never the key. A blank key on save keeps the existing key; `clear_key` removes it. |
-| FR-18 | Lecturer-only `POST /api/llm/test` checks a short tool call with an 8-second default per-request timeout. Success returns provider, model, latency, and `tool_calling` (`supported`/`not_supported`). Failure categories: `invalid_key` (401/missing key), `no_access` (403/404), `rate_limit` (429), `timeout`, `network`, `unknown_provider`, `invalid_request`, `upstream`. If tools cause HTTP 400 but a plain retry succeeds, report `not_supported`. Never echo the key or save test-only settings. |
-| FR-19 | Accept attention samples only with `source=sample-not-camera`; include the disclaimer on reads. No image input. |
-| FR-20 | Require `X-Lecturer-Token` for room creation, current code, attendance/export, poll creation, comment/homework lists, transcript, summary, lecturer-audience review, attention, and model configuration/test. Student check-in, poll answers, comments, homework submission, and student-audience review are public demo routes. |
+| FR-18 | Lecturer-only `POST /api/llm/test` runs a short tool call (8-second default timeout). Success returns provider, model, latency, and `tool_calling`. Failure categories follow the existing API (`invalid_key`, `no_access`, `rate_limit`, `timeout`, `network`, `unknown_provider`, `invalid_request`, `upstream`). Never echo the key or save test-only settings. |
+| FR-19 | Accept attention samples only with `source=sample-not-camera`. No image input. |
+| FR-20 | Require `X-Lecturer-Token` for room creation, roster/presence settings, attendance/export, current barcode, poll creation, comment/homework lists, transcript, summary, lecturer-audience review, attention, and model configuration/test. Student identify, barcode submit, helper finish, poll answers, comments, homework, and student-audience review are public demo routes. |
+
+An optional ultrasonic FSK beacon and typed code remain in the demo. They are not required for FR-6.
 
 ## 4. Non-functional requirements
 
 | Concern | Requirement or limit |
 | --- | --- |
-| Authentication and crypto | Constant-time lecturer-token/HMAC comparison; ECDSA P-256/SHA-256. Browser signatures are raw 64-byte r\|\|s; the server converts them to DER. See [design](07-design.md) for framing. |
-| Secrets | Gitignore `.env`; examples contain empty secrets. Provider keys travel in headers (`Authorization`, `x-api-key`, `x-goog-api-key`), not query strings. Scrub provider errors and omit keys from API responses. |
-| Privacy | Redact known display names and ids on the agent path; tool results use pseudonyms. The attendance export is lecturer-only and is not agent input. Unknown names embedded in free text may remain. |
-| Performance | The 6-byte FSK payload takes about 1.1 seconds at 20 ms/bit. Current plus previous token windows allow decoding margin. Model calls should not delay attendance; synchronous calls in the current demo need isolation. |
-| Usability | Phone: identity, six-zone map, listening, code fallback, remote, poll, comment, homework. Lecturer: room/code, playback, sheet/export, poll, transcript, agent, and model settings. An energy indicator assists audio diagnosis. |
-| Availability | Restarting loses all lesson state even with a stable secret. No database or recovery is included. Provider failure must not fabricate an AI result; the current blocking model-call path remains an availability gap. |
-| Attention | Zone aggregates are an indicator, not a grade. Demo samples must remain visibly labeled; no camera observation is claimed. |
+| Authentication and crypto | Constant-time lecturer-token and HMAC comparison. Barcode freshness uses server time, not the phone clock. |
+| Secrets | Gitignore `.env`. Helper key in a mode-`0600` setup file. The Wi-Fi password is used only to draw a local Wi-Fi QR and is not sent to the server. Omit keys from API responses. |
+| Privacy | No national id in the roster store or the export. Email is used only for confirmation (salted HMAC); the public list and the export do not include the raw email. Redact known names on the agent path; tool results use pseudonyms. |
+| Usability | Phone: name list, email confirmation, two-second camera scan, then the network step, plus poll, comment, and homework. Lecturer: room, roster import, flickering barcode, network fields, sheet/export, poll, transcript, agent, and model settings. |
+| Availability | Restarting loses all lesson state. Provider failure must not fabricate an AI result. |
+| Attention | Zone aggregates are an indicator, not a grade. No camera observation is claimed. |
 
 ## 5. Threat model
 
 | Threat | Mitigation | Residual limit |
 | --- | --- | --- |
-| Forged token | Room-specific HKDF key and HMAC; wrong-room codes fail. | Leaking the master secret compromises all room keys. |
-| Replay | Current/grace windows; one redemption per code/device; grace is flagged. | Another device can redeem a shared current code. |
-| Acoustic relay | 18/19 kHz signal and expiring challenge. A simulated 3400 Hz ×4 lowpass removed the laboratory signal. | A full-band relay can carry it; no real-call trial has been performed. Challenge age alone does not prove location. |
-| Screenshot/shared code | Short lifetime, signed challenge, device flags, and no public current-code route. | Fast sharing can still succeed. |
-| Spoofed subnet/VPN | Trust forwarded headers only from configured proxies; subnet mismatch is flagged. | Campus ranges also cover dorms/VPN; IP match does not prove classroom presence. |
-| Shared/multiple devices | `shared_device`/`multi_device` flags and low confidence; retain records. | Lecturer judgment is needed. Clearing browser storage creates another device identity. |
-| Impersonation | Signed check-in associates the typed id with a browser key; conflicting use is flagged. | No university login verifies who typed the id. |
-| Invalid or misleading AI | Read-only tools, a data-tool prerequisite, report checks, citations requested by prompt, and `not_a_grade: true`. | Validation is partial: it cannot prove findings are correct or citations support them. Live-model evaluation remains open. |
-| Key disclosure | No key in config/student responses; scrub provider errors; tests do not persist keys. | The laptop's process memory and `.env` remain trusted. |
+| Forged barcode or wrong room | Room HKDF key and per-frame HMAC. | A leaked master secret compromises room keys. |
+| Replay or stale frame | Server-clock freshness (6 s); single-use per student. | A very fast live relay can still present fresh frames. |
+| Screenshot or shared photo | Liveness: ≥5 distinct frames over ~2 s; `qr_static` / `qr_short`. | A live video relay from a classmate may pass liveness. |
+| Student not in the room | Local helper checks the real socket peer in the entered range. | Someone already on the hotspot can relay a challenge. |
+| Spoofed IP, SSID, or proxy header | Ignore claimed IP/SSID and `X-Forwarded-For`; reject public or > /24 ranges and bind `0.0.0.0`. | OS routing issues if another network uses the same subnet. |
+| Impersonation | Name must come from the imported list; email checked with a salted HMAC; lockout. | No university login; a student who knows a peer's email can still try that name. |
+| Invalid or misleading AI | Read-only tools, a data-tool prerequisite, report checks, `not_a_grade: true`. | Validation cannot prove findings are correct. Live-model evaluation remains open. |
+| Key disclosure | No key in config/student responses; scrub provider errors. | Process memory, `.env`, and the helper setup file remain trusted. |
 
 ## 6. Traceability
 
-The [testing strategy](08-testing-strategy.md) maps requirement ids to classes and tests, including gaps. The [agent specification](09-ai-agent.md) defines tools, the loop, and report shapes. Physical and live-model acceptance is recorded through the [demo checklist](10-demo-script.md).
+The [testing strategy](08-testing-strategy.md) maps requirement ids to classes and tests. Agent loop details remain in [the agent specification](09-ai-agent.md). Physical acceptance is recorded through the [demo checklist](10-demo-script.md).

@@ -1,38 +1,32 @@
 # Design
 
-Class and sequence diagrams for the demo. Sources and SVG exports live in `docs/diagrams/`. The agent itself is specified in `docs/09-ai-agent.md`; the loop sequence is included here so the design set is in one place.
+Class and sequence diagrams for the demo. Sources and SVG exports live in `docs/diagrams/`. Full agent, hotspot-setup, and Render notes remain in [09-ai-agent](09-ai-agent.md), [12-hotspot-presence](12-hotspot-presence.md), and [deploy-render](deploy-render.md); the essentials used for attendance and the agents are summarized here.
 
 ## Design rules that the code follows
 
-- A broadcast token is single-use **per device**. The whole class hears one signal, so every device may redeem the current code once. A second redemption by that device is rejected.
-- The previous window is accepted and flagged `late_token`. Older windows fail.
-- Remote admission is a different token, stored on a `remote` row. It is not an HMAC of the acoustic payload.
-- Names exist on attendance, comments, and homework records. `Store.snapshot` is the only door into the agent, and it redacts them.
+- The roster checkmark requires, in order: a name from the imported list and a correct email confirmation, a two-second live barcode sequence (unless the lecturer turned that step off), and a helper observation from a real socket peer inside the configured range.
+- Barcode frames are single-use per student, room-bound, and judged at receipt by the server clock (6 seconds). Liveness needs at least five distinct frames spanning about two seconds. A still photo is `qr_static`; a short capture is `qr_short`.
+- The helper does not trust a body field `ssid` or `ip`, `X-Forwarded-For`, or a public or wider-than-/24 range. It will not bind `0.0.0.0`.
+- Names exist on attendance, comments, and homework records. `Store.snapshot` is the only door into the agent, and it redacts them. A national id is not stored. The email is kept only as a salted HMAC for confirmation; the raw address is not shown on the public list or the export.
 - `produce_report` is the only way the agent finishes. There is no offline stub on the HTTP API.
 - Attention samples must declare `source=sample-not-camera`.
+- An optional FSK beacon and typed code remain in the UI. They are not required for the checkmark.
 
 ## Classes
 
 ![Classes](diagrams/classes.svg)
 
-`SeatZone` is a checked value, not a picture of the furniture. `Poll`, `Comment`, and `HomeworkSubmission` are the records on the room. `SummaryService` and `HomeworkReviewService` are thin: they pick the task and call `LessonAgent`. `LLMClient` hides which provider is configured.
-
-Crypto and framing details:
+`SeatZone` is a checked value, not a picture of the furniture. `Poll`, `Comment`, and `HomeworkSubmission` are records on the room. `SummaryService` and `HomeworkReviewService` pick a task and call `LessonAgent`. `LLMClient` hides which provider is configured.
 
 | Item | Value |
 | --- | --- |
-| HKDF | SHA-256, 32 bytes, salt = room salt, info = `zoomoodle-room-v1` |
-| Token message | UTF-8 `roomId\|window\|` concatenated with a 2-byte nonce |
-| MAC | First 4 bytes of HMAC-SHA256 |
-| On-screen code | Base32 of `nonce \|\| mac`, padding stripped |
-| Audio | 48 kHz nominal, 20 ms/bit, 18 kHz = 0, 19 kHz = 1, preamble `11110010`, then 48 payload bits |
-| Device signature | ECDSA P-256 / SHA-256 over UTF-8 `challengeId\|nonce`, raw r\|\|s on the wire |
-| Device id | First 16 hex chars of SHA-256 of `jwk.x + "." + jwk.y` |
-| Session HKDF | SHA-256, 32 bytes, salt = `zoomoodle-session-v1`, info = `zoomoodle-session-mac` |
-| Session MAC | HMAC-SHA256 over `METHOD\npath?query\nbody\ntimestamp\nnonce` |
-| Session window | 60 seconds, nonce remembered until it falls outside that window |
-
-Confidence starts high for a fresh in-class row. One weakness (late, subnet mismatch, or remote) makes it medium. Two weaknesses, or any of `both_modes`, `shared_device`, `multi_device`, makes it low.
+| Room key | HKDF-SHA256, 32 bytes, salt = room salt, info = `zoomoodle-room-v1` |
+| Email confirmation | Per-person salt and HMAC of the normalized email under the master secret; national id not stored |
+| Barcode frame | Signed QR about every 250 ms; shimmer seed at about 20 Hz |
+| Liveness | ~2 s hold, ≥5 distinct frames; `qr_static` / `qr_short` |
+| Freshness | 6 s at receipt, server clock only |
+| Helper range | Lecturer-entered CIDR, no wider than /24; real socket peer |
+| Typical defaults | Windows `192.168.137.1` + `192.168.137.0/24`; macOS `192.168.2.1` + `192.168.2.0/24` |
 
 ## Sequences
 
@@ -40,103 +34,39 @@ Confidence starts high for a fresh in-class row. One weakness (late, subnet mism
 
 ![In-class check-in](diagrams/seq-checkin.svg)
 
-The microphone path and the typed code meet at the same POST. The server does not care which one produced the Base32 string. Latency is the age of the challenge, checked before the HMAC result is trusted.
+Name and email confirmation create a student session without a checkmark. The phone then submits the two-second live frame batch. Only after a successful helper `/prove` on the hotspot does the server mark the roster and return the welcome. Closing the room revokes both the helper and the session.
 
-### Per-student session key
+### Other sequences
 
-Three keys, three jobs:
+Remote check-in, polls, export, the agent loop, and the connection test are unchanged in structure and remain in `docs/diagrams/` (`seq-remote`, `seq-poll`, `seq-export`, `seq-agent`, `seq-llm-test`). Remote admission still creates no roster checkmark. Export remains lecturer-only and is not model input. The agent loop still requires a data tool before `produce_report` and rejects a fabricated or ungraded homework report (`not_a_grade` must be `true`).
 
-- The **room key** is HKDF(`zoomoodle-room-v1`) from the master secret and the room salt. It stays on the server and only mints the rotating presence code.
-- The **device key** is the phone's P-256 key. It signs the check-in challenge so the server knows the same browser that opened the challenge is the one redeeming the rotating code. It is not used for later lesson actions.
-- The **session key** is a 32-byte secret the server creates at a successful in-class check-in or remote join. That response is the only time the secret is returned. The server derives an HKDF verifier (`zoomoodle-session-v1` / `zoomoodle-session-mac`) and stores that verifier, not the secret. The phone keeps the secret in `sessionStorage` and `localStorage` and derives the same verifier to sign later requests.
+## Hotspot and launchers (essentials)
 
-A lesson action sends `x-zoomoodle-session`, `x-zoomoodle-timestamp`, `x-zoomoodle-nonce`, and `x-zoomoodle-signature`. The signature is HMAC-SHA256 of `METHOD`, the path including the query, the raw body, the unix timestamp, and the nonce. The server rejects a bad MAC (`bad_session`), a timestamp outside 60 seconds (`session_expired`), and a nonce it has already accepted (`session_replay`). Closing the lesson revokes write authority (`session_revoked`): votes, questions, and upvotes fail with that code. Signed reads still work so the phone can load the published summary. The lecturer sheet shows only `verified` or not. The secret is not in the attendance JSON, the overview, or the CSV/XLSX export.
+This is not fully automatic provisioning. After `~/.zoomoodle/lecturer-setup.json` holds the server, room, bind address, and helper key, a double-click starts the helper only. On macOS, Internet Sharing stays a manual System Settings step (Ethernet or another upstream shared **to** Wi-Fi). On Windows, the launcher may try `NetworkOperatorTetheringManager` and otherwise opens Mobile Hotspot settings. Two QR codes: a Wi-Fi QR that only joins the network, and a join QR that only opens the student link. The Wi-Fi password is not stored on the server. Someone already on the hotspot can still relay a challenge. Physical Mac/Windows/phone trials are open.
 
-The fixed join QR is the student URL for that room. It is not the rotating presence code. In-class presence is still the sound beacon or the rotating code on the sound tab.
+## Lesson agent (essentials)
 
-```mermaid
-sequenceDiagram
-  participant Phone
-  participant Server
-  participant Lecturer
-  Phone->>Server: POST /checkin or /remote-join
-  Note over Server: presence proof only on /checkin
-  Server-->>Phone: session_id + session_key once
-  Note over Server: store HKDF verifier, drop the secret
-  Phone->>Server: HMAC over method, path, body, timestamp, nonce
-  Server-->>Phone: counts, poll, questions, summary
-  Lecturer->>Server: POST /close
-  Note over Server: revoke write authority
-  Phone->>Server: signed vote or question
-  Server-->>Phone: session_revoked
-  Phone->>Server: signed GET /summary
-  Server-->>Phone: published text
-```
+One tool-calling agent supports `lesson_summary` and `homework_review`. It never assigns a grade. Tools are read-only (`get_transcript_segment`, `get_poll_results`, `get_attention_by_zone`, `list_comments`, homework get/compare). The loop may run up to `ZOOMODLE_AGENT_MAX_STEPS` (default 8). A report is accepted only after a data tool and schema checks; otherwise the HTTP API returns an error, not a substitute narrative. Known names and ids are redacted; the attendance sheet is not in the snapshot.
 
-What is tested: the secret differs from the stored verifier; a forged MAC, an old timestamp, and a replayed nonce are rejected; a write after close returns `session_revoked`; a signed read of the summary still succeeds; the secret string is absent from attendance, overview, CSV, and XLSX; the phone signs the lesson calls in the headless browser run. What is only designed: Render's HTTPS proxy is what protects the one response that carries the secret (the app does not terminate TLS); the verifier lives in process memory until the process exits; restarting the process drops every room, including verifiers and used nonces.
+## Deploy (essentials)
 
-### Roster checkmark and the lecturer hotspot
-
-The roster checkmark is a second proof, not the rotating code. The lecturer imports a CSV. The server keeps names, group, a per-person salt, and an HMAC of the last four id digits under the master secret. It does not keep the email or the full id. The phone shows only the selected group's names. A blank group is included only when the lecturer asks for it.
-
-```mermaid
-sequenceDiagram
-  participant Phone
-  participant Helper as Helper on hotspot NIC
-  participant Server
-  Phone->>Server: name id + last four digits
-  Server-->>Phone: session + challenge, no checkmark
-  Phone->>Helper: top-level open /prove?c=challenge
-  Note over Helper: reject if the socket is not the bound address
-  Helper->>Server: HMAC observe
-  Helper-->>Phone: redirect back, no helper key
-  Phone->>Server: signed finish
-  Server-->>Phone: in_class checkmark and welcome
-```
-
-A body field `ssid` or `ip` does not satisfy `observe`. Closing the room revokes the helper and the student session. Relay through someone who is already on the hotspot is still possible; the proof is the network path to the helper, not the person and not the physical room.
-
-Tested: import minimization, group and duplicate handling, pin lockout, forged helper MAC, expiry, replay, cross-room, cross-student, revoke, close, remote without a checkmark, and a helper decision that rejects the wrong interface. The launcher plan is tested without changing a network. Not tested: macOS, Windows, iOS Safari, Android Chrome, or a real hotspot. Setup steps and those limits are in [hotspot presence](12-hotspot-presence.md).
-
-### Remote check-in
-
-![Remote check-in](diagrams/seq-remote.svg)
-
-### Poll
-
-![Poll](diagrams/seq-poll.svg)
-
-### Export
-
-![Export](diagrams/seq-export.svg)
-
-### Agent loop (lesson summary and homework review)
-
-![Agent loop](diagrams/seq-agent.svg)
-
-Homework review is the same loop. The task text names the submission id and the audience (`student` or `lecturer`), and the schema requires `not_a_grade: true`.
-
-### Connection test
-
-![Connection test](diagrams/seq-llm-test.svg)
-
-Save and test are separate. Test may send a key that is used for that request only.
+Render uses `demo-web/render.yaml` with `rootDir: demo-web`. Rooms are in memory, so a spin-down or redeploy erases them. The lecturer token lives in the Render dashboard. The presence helper and the hotspot are not part of that service; they run on the laptop. Phones still need the Render HTTPS origin for the camera.
 
 ## Module map
 
 ```text
 app/main.py            HTTP
 app/store.py           rooms and the redacting snapshot
-app/crypto_tokens.py   KeyManager, TokenService
-app/session_keys.py    per-student HKDF verifier and request HMAC
-app/device_keys.py     JWK and ECDSA
+app/crypto_tokens.py   KeyManager
+app/roster.py          class list and RoomRoster.verify_email HMAC
+app/screen_qr.py       flickering barcode issue/verify
+app/network_range.py   verifier address and client CIDR
+app/presence.py        local helper observe path
+app/session_keys.py    per-student request HMAC
 app/attendance.py      AttendanceService, DeviceBinding, AnomalyDetector
 app/export_svc.py      ExportService
 app/attention.py       AttentionAggregator
-app/audio_fsk.py       modem used by tests and the VM spike
-app/static/fsk.js      the same modem in the browser
-app/llm/providers.py   adapters and LLMClient
-app/llm/agent.py       LessonAgent, SummaryService, HomeworkReviewService
-app/llm/tools.py       ToolRegistry
-app/llm/prompts.py     system prompt
+app/llm/               providers, agent, tools, prompts
+app/audio_fsk.py       optional legacy modem (tests / UI tab)
+app/static/fsk.js      same modem in the browser
 ```

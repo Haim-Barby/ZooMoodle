@@ -19,7 +19,7 @@ from app.lecturer_auth import LecturerAuth, LecturerAuthError
 from app.llm.agent import AgentError, SummaryService
 from app.llm.providers import KEY_OPTIONAL, KNOWN_PROVIDERS, LLMClient, LLMConfig, ProviderFailure, build_provider
 from app.mailer import Mailer
-from app.net import client_ip, subnet_status
+from app.net import client_ip, forwarded_debug, subnet_status
 from app.roster import RosterError
 from app.session_keys import SessionError, canonical_message
 from app.store import Store, StoreError
@@ -67,8 +67,13 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
         return room
 
     def on_campus(request: Request) -> bool:
-        ip = client_ip(dict(request.headers), request.client.host if request.client else None, settings.trusted_proxies)
-        return subnet_status(ip, settings.campus_ranges) == "match"
+        headers = dict(request.headers)
+        peer = request.client.host if request.client else None
+        ip = client_ip(headers, peer, settings.trusted_proxies)
+        status = subnet_status(ip, settings.campus_ranges)
+        if status != "match":
+            print(f"campus_check {status} derived={ip} {forwarded_debug(headers, peer)}", flush=True)
+        return status == "match"
 
     def claim_for(room, session):
         try:

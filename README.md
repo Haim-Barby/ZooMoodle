@@ -1,100 +1,77 @@
 # ZooMoodle
 
-A simple web teaching tool for one lesson: automatic attendance with anomaly flags, student feedback, polls, and LLM-assisted lesson and homework review.
+A one-lesson teaching tool: the lecturer opens a lesson room, students join from their phones, and the lecturer sees who is in class, who is remote, and what the class thinks — notes, questions, polls, homework and an optional AI summary.
 
-Individual project for Introduction to Software Engineering (OOP/OOD), Exercise 2. Deadline: 25 November 2026. A demo and the design documents are included. Real-phone camera and hotspot trials, live-model validation, and the in-class demo remain open.
+Individual project, Introduction to Software Engineering (OOP/OOD), Exercise 2. Deadline: 25 November 2026. Course used for the demo: **מערכות נוירונים, week 4, lecturer טום יניב**.
 
-## Problem and scope
+## The flow
 
-Attendance codes can be shared, and lecturers receive feedback too late to see which material confused the class. ZooMoodle aims to make in-class presence harder to fake and more visible, and to connect feedback to lesson topics and seat zones.
+**Lecturer**
 
-Students use a phone browser; the lecturer uses a laptop. The goal is an implementable end-to-end design and a real classroom demo of about ten minutes. Attendance is the main feature. The system does not claim to prevent all fraud.
+1. Signs in with the lecturer key (a 256-bit random key). The page greets: *"שלום טום יניב, השבוע שבוע 4 בקורס מערכות נוירונים"*.
+2. Opens a new lesson and imports the class list (CSV: first name, last name, email; an id-number column is ignored and never stored).
+3. Shows two things on the projector: a **join QR** (opens the student site for this room) and the **live flickering barcode**.
+4. Works from the room dashboard: in-class vs remote counts, the attendance list with ✓, a 3×3 class map, duplicate-name decisions, student notes, questions sorted by votes, polls with live results, homework upload, the lesson summary, and CSV/Excel export.
 
-Each lesson is a **Room**, with its own derived cryptographic key and its own attendance, polls, comments, homework, and transcript.
+**Student (phone)**
 
-**In-class attendance** is a combined check:
+1. Scans the join QR → picks their name from the list → chooses **בכיתה** or **מרחוק**. No id number and no email at entry.
+2. **Remote:** marked remote at once. No network or barcode check.
+3. **In class:** must pass both checks —
+   - **University network.** The server reads the phone's real public IP and requires it to be inside the university ranges (default `192.114.48.0/21`, `192.114.56.0/23`). Body fields are ignored.
+   - **Live barcode.** The camera is held on the flickering barcode for 2 seconds. A signed QR changes every 250 ms inside a 20 Hz shimmering border; the phone must collect ≥5 distinct codes. A screenshot (`qr_static`), a short capture (`qr_short`), a code older than 6 s by the server clock, a reused code, or a code from another room is rejected.
+4. Picks their area in the classroom (3×3 map) → **✓ ברוך הבא ‹name›**.
+5. From the phone: write a note, ask or up-vote a question, answer a poll, download homework, read the summary (or make a private one with their own API key).
 
-1. **Roster.** The lecturer imports a class list. The student picks a name and confirms with that person's email. The server checks a salted HMAC of the email and does not store a national id. The public name list does not show the email.
-2. **Live barcode.** The lecturer screen shows a flickering, video-like barcode: a signed QR that changes about every 250 ms, with a border that shimmers about 20 times a second from a server seed. The phone must hold the camera on that live pattern for about two seconds and collect at least five distinct frames. A still photo or screenshot is rejected (`qr_static`); a shorter capture is rejected (`qr_short`). Each code is room-bound, HMAC-signed, single-use, and checked for freshness against the server clock (6 seconds at receipt).
-3. **Network verifier.** The phone must open the lecturer's local helper from an address inside the lecturer-entered client range (no wider than /24). The helper reads the real socket peer; a claimed IP or Wi-Fi name is not enough. Double-click launchers start the helper after a saved setup. They do not fully provision a hotspot.
-4. **Admission.** Only then does the lecturer sheet show a checkmark and the phone shows a welcome (`ברוך הבא`) with that name.
+**Duplicate names** are resolved in stages:
 
-A classmate who live-streams the lecturer screen may still pass liveness; the network check covers a student who is not on the lecturer's network. An older ultrasonic 18/19 kHz FSK beacon and typed on-screen code remain in the demo as an optional path; they are not required for the checkmark and have not been verified on real speakers or a phone. Physical camera scanning and a real hotspot are also unverified. Hotspot setup is in **Lecturer hotspot** below.
-
-| Also in the demo | Scope |
-| --- | --- |
-| Attendance sheet | Separate in-class and remote rows, roster checkmarks, six seat zones, confidence, and anomaly flags. Lecturer-only CSV/XLSX export. |
-| Comments | During or after the lesson while the server is up. Offline sync is not implemented. |
-| Instant polls | Two to six options, an optional correct answer, one answer per student, and lecturer results by zone. |
-| Lesson summary | Import a UTF-8 transcript; a tool-calling agent combines it with polls, comments, and zone aggregates. Transcription is external. |
-| Homework review | The same agent compares a submission anonymously with peers. It does not assign grades. |
-| Model connection | Lecturer-selected provider, model, optional base URL, and server-side key; separate Save and Test actions. |
-| Attention map | Labeled sample aggregates only. A live camera pipeline is outside the demo. |
-
-The LLM code paths exist, but successful real-model output has not been validated. Without a configured model, the app returns an error instead of a fabricated report.
-
-Out of scope: Moodle/Zoom/personal-information integration, native mobile apps, university accounts, a durable database, face recognition, and stored classroom video. The agent uses pseudonyms and best-effort redaction.
-
-## Assignment deliverables
-
-Status distinguishes a written artifact from completed validation.
-
-| Item | Artifact | Status |
+| Stage | Situation | What happens |
 | --- | --- | --- |
-| 1. Problem and scope | This README | Written |
-| 2. Tools report | [Tools and recorded experiments](docs/02-tools-report.md) | VM and Mac tests recorded; physical camera, hotspot, and live-provider checks pending |
-| 3. SoW | [Statement of work](docs/03-SoW.md) | Written |
-| 4. SRS | [Requirements and threat model](docs/04-SRS.md) | Written |
-| 5. Use cases | [Stories and acceptance criteria](docs/05-use-cases.md) | Written |
-| 6. Components | [Components and interfaces](docs/06-components.md) | Written |
-| 7. Design | [Class and sequence diagrams](docs/07-design.md) | Written |
-| 8. Test strategy | [Tests and traceability](docs/08-testing-strategy.md) | Written; 103 automated tests passed on the owner's Mac |
-| 9. Demo app | `demo-web/` (`app/`, `tests/`, `requirements.txt`) | Implemented; physical camera and hotspot trials remain, see [conclusions](docs/11-conclusions.md) |
-| 10. Classroom demo | [Ten-minute script](docs/10-demo-script.md) | Not performed |
-| 11. Conclusions | [Results and remaining work](docs/11-conclusions.md) | Draft; classroom results pending |
+| 1 | Same name chosen remotely and verified in class | In class wins; the remote entry is flagged for the lecturer. |
+| 2 | Two verified in-class phones with one name | Both get a popup and re-pick their real name. |
+| 3 | Still the same name | A 6-digit one-time code is e-mailed to that name's roster address; whoever types it gets the name (hashed, 5 min, 3 tries per phone, single use). |
+| 4 | Still unresolved | The lecturer decides on the dashboard (and asks in class). |
 
-The assignment deliverables are the eleven items above. Hotspot setup and Render steps are in the sections below; design details are in [the design document](docs/07-design.md).
+## Privacy and security in one paragraph
 
-## Run the demo
+The lecturer key is never committed or printed; the server keeps only an HMAC of it and hands the browser a short-lived session token. Each student phone gets its own session secret and signs every request (HMAC-SHA256, timestamp, nonce). Roster emails are kept as salted HMACs; the plain address lives only in server memory to send the duplicate-name code and never appears in any response, list or export. LLM API keys are used for one request and dropped — never stored, logged or returned.
 
-Use Python 3.12 and a virtual environment. The app lives in `demo-web/`:
+## Run it
 
 ```bash
 cd demo-web
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env          # optional settings, never committed
+python -m app.main            # http://127.0.0.1:8000/
 ```
 
-Set `ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_TOKEN` in `.env`. If empty, the process generates them and prints the lecturer token once. The store is in memory: restarting loses rooms even with a stable secret. Never commit `.env`.
+- On first start the lecturer key is created at `~/.zoomoodle/lecturer-key.txt` (mode 600). Only the path is printed. Paste the key on the lecturer page.
+- Phones need **HTTPS** for the camera: `cloudflared tunnel --url http://127.0.0.1:8000`, and open the lecturer page through that URL so the join QR uses it.
+- To try the in-class path at home, add your own address to `ZOOMODLE_CAMPUS_RANGES` in `.env` (for a local browser: `127.0.0.1/32`).
+- Duplicate-name e-mail: set `ZOOMODLE_SMTP_*` in `.env`. `DEMO_EMAIL_OVERRIDE` routes every code to one demo inbox. With no SMTP the code is shown on the lecturer dashboard under **"מצב הדגמה – המייל לא נשלח"**.
+- Tests: `python -m pytest -q` from `demo-web/`.
 
-```bash
-python -m app.main
-```
+**Client IP behind a proxy.** Forwarded headers are trusted only from `ZOOMODLE_TRUSTED_PROXIES`. `CF-Connecting-IP` is accepted only from loopback (cloudflared on the same laptop). Otherwise the right-most `X-Forwarded-For` hop that is not a trusted proxy is used — on Render, the hop Render's proxy appended. A browser-supplied left-most hop is ignored. The assumption is that the platform proxy is the only path to the app.
 
-The lecturer page is at `http://127.0.0.1:8000/`. Phones need HTTPS for the camera (and for the optional microphone path). After [installing cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), run `cloudflared tunnel --url http://127.0.0.1:8000` in a second terminal. Open the lecturer page through the printed HTTPS URL so student links use that origin. A localhost link must have its origin replaced before sharing.
+**Render.** `demo-web/render.yaml` describes a free web service. Set `ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_KEY` in the Render dashboard (an existing `ZOOMODLE_LECTURER_TOKEN` is accepted as the key). State is in memory: a restart or the free-plan spin-down clears lessons, so export the sheet before you finish.
 
-The flickering barcode is on the lecturer screen. The local verifier runs on the laptop, on the hotspot network, not through the tunnel and not on Render. Camera scanning on a real phone and a real hotspot have not been tested.
+## Assignment deliverables
 
-The optional campus-subnet list in `.env.example` is supporting evidence only; it is not the hotspot range check. The lecturer enters the verifier address and the phone range on the lecturer page. Forwarded IP headers are accepted only from `ZOOMODLE_TRUSTED_PROXIES` (default loopback).
+| # | Item | File |
+| --- | --- | --- |
+| 1 | Problem and scope | this README |
+| 2 | Tools report | [docs/02-tools-report.md](docs/02-tools-report.md) |
+| 3 | Statement of work | [docs/03-SoW.md](docs/03-SoW.md) |
+| 4 | Requirements and threat model | [docs/04-SRS.md](docs/04-SRS.md) |
+| 5 | Use cases | [docs/05-use-cases.md](docs/05-use-cases.md) |
+| 6 | Components | [docs/06-components.md](docs/06-components.md) |
+| 7 | Class and sequence diagrams | [docs/07-design.md](docs/07-design.md) |
+| 8 | Testing strategy | [docs/08-testing-strategy.md](docs/08-testing-strategy.md) |
+| 9 | Demo app | `demo-web/` |
+| 10 | 10-minute demo script | [docs/10-demo-script.md](docs/10-demo-script.md) |
+| 11 | Conclusions | [docs/11-conclusions.md](docs/11-conclusions.md) |
 
-From `demo-web/`, run `pytest`. A local run on the owner's Mac reported **103 passed**. That suite does not replace a physical camera or hotspot trial.
+**Not yet verified:** a real phone camera on the projected barcode, the university network as seen from Render, real SMTP delivery, and a live LLM call. The automated suite and a headless-browser run do not replace those checks.
 
-For AI, enter provider, model, and key, press **Save settings**, then **Test connection**. Test alone does not save the key. Supported adapters: OpenAI, Anthropic, Gemini, xAI, Ollama, and other OpenAI-compatible endpoints. Keys stay in server memory or the uncommitted environment file and are omitted from configuration responses.
-
-## Lecturer hotspot
-
-This is not fully automatic. On the lecturer page, enter the network name, the verifier address, and the phone address range (no wider than /24). Windows Mobile Hotspot is often `192.168.137.1` and `192.168.137.0/24`. macOS Internet Sharing is often `192.168.2.1` and `192.168.2.0/24`. Pair the helper and copy the one-time key into `~/.zoomoodle/lecturer-setup.json` (mode `0600`), together with the server, room, bind address, and range.
-
-Then double-click `demo-web/launch/macos/ZooMoodle Lecturer.command` or `demo-web/launch/windows/ZooMoodle Lecturer.bat`. That starts the local verifier only. On macOS, turn on Internet Sharing yourself (Ethernet or another upstream shared **to** Wi-Fi) in System Settings → General → Sharing. On Windows, the launcher may try `NetworkOperatorTetheringManager`; otherwise open Mobile Hotspot settings.
-
-Show two QR codes: one only to join the Wi-Fi, and one only to open the student page. The Wi-Fi password is used to draw the Wi-Fi QR and is not sent to the server. The helper does not bind `0.0.0.0` and checks the real socket peer. Someone already on the hotspot can still relay a challenge.
-
-## Deploy on Render
-
-A free Web Service Blueprint is in `demo-web/render.yaml` (`rootDir: demo-web`). In the Render dashboard choose **New** → **Blueprint**, select this repository, and apply. The service builds with `pip install -r requirements.txt` and serves HTTPS. `autoDeploy` follows `main`.
-
-`ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_TOKEN` are generated by Render and live in the service Environment, not in git. Copy the token into the lecturer page. A few minutes before class, open `/api/health` and leave a tab open — the free plan spins down after about 15 minutes, and a restart or spin-down erases in-memory rooms. Export the attendance sheet before you finish.
-
-The local verifier and the hotspot run on the laptop, not on Render. Student links must use the Render HTTPS origin so the phone camera is allowed.
+Out of scope: Moodle/Zoom integration, university login, native apps, a database, face recognition.

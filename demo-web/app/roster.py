@@ -1,8 +1,9 @@
-"""Room roster import and email confirmation.
+"""Room roster import.
 
-The national id from the CSV is ignored and not stored. The email is kept
-only as an HMAC under the server master secret and a per-person salt.
-Plain email is never stored or returned.
+The national id column is ignored and not stored. Each email is kept as a
+salted HMAC under the server master secret. The plain address is held only
+in server memory, on a field that is excluded from repr, so the duplicate-name
+step can send a one-time code to it. No API response or export contains it.
 """
 
 from __future__ import annotations
@@ -16,8 +17,6 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
-IDENTITY_WINDOW_SECONDS = 600
-IDENTITY_LIMITS = {"entry": 5, "ip": 20, "attempt": 10}
 
 GIVEN_ALIASES = frozenset({"שם פרטי", "first name", "given name", "given", "firstname", "first"})
 FAMILY_ALIASES = frozenset({"שם משפחה", "last name", "family name", "family", "lastname", "surname", "last"})
@@ -89,6 +88,7 @@ class RosterEntry:
     group: str
     salt: bytes
     verifier: bytes
+    email: str = field(default="", repr=False, compare=False)
 
     @property
     def display(self) -> str:
@@ -165,7 +165,6 @@ class RoomRoster:
         self.entries: dict[str, RosterEntry] = {}
         self.selected_group: str | None = None
         self.include_unspecified = False
-        self.limiter = RateLimiter(clock or time.time)
 
     def replace_from_csv(self, text: str) -> dict:
         rows, stats = parse_roster_csv(text)
@@ -181,6 +180,7 @@ class RoomRoster:
                 group=row["group"],
                 salt=salt,
                 verifier=verifier,
+                email=row["email"],
             )
         self.entries = sealed
         self.selected_group = None
@@ -204,6 +204,8 @@ class RoomRoster:
         return {"group": self.selected_group or "", "include_unspecified": self.include_unspecified, "listed": len(self.public_names())}
 
     def _selected(self, entry: RosterEntry) -> bool:
+        if self.selected_group is None and not self.include_unspecified:
+            return True
         if self.include_unspecified:
             return entry.group == ""
         if self.selected_group is None:
@@ -215,40 +217,20 @@ class RoomRoster:
         chosen.sort(key=lambda entry: (entry.family, entry.given, entry.id))
         return [{"id": entry.id, "display": entry.display} for entry in chosen]
 
-    def lecturer_rows(self, in_class: dict, remote: dict) -> list[dict]:
-        rows = []
-        for entry in sorted(self.entries.values(), key=lambda item: (item.family, item.given, item.id)):
-            rows.append(
-                {
-                    "id": entry.id,
-                    "display": entry.display,
-                    "group": entry.group,
-                    "in_class": bool(in_class.get(entry.id)),
-                    "remote": bool(remote.get(entry.id)),
-                }
-            )
-        return rows
-
-    def verify_email(self, entry_id: str, email: str, ip: str, attempt: str) -> RosterEntry:
-        keys = (
-            ("entry:" + (entry_id or ""), IDENTITY_LIMITS["entry"]),
-            ("ip:" + (ip or "unknown"), IDENTITY_LIMITS["ip"]),
-            ("attempt:" + (attempt or "none"), IDENTITY_LIMITS["attempt"]),
-        )
-        for key, limit in keys:
-            if not self.limiter.allow(key, limit, IDENTITY_WINDOW_SECONDS):
-                raise RosterError("identity_limited")
+    def get(self, entry_id: str) -> RosterEntry | None:
         entry = self.entries.get(entry_id or "")
-        candidate = normalize_email(email)
-        if entry is None or not self._selected(entry) or not is_valid_email(candidate):
-            dummy = email_mac(self.master, b"\x00" * 16, "none", "nobody@example.invalid")
-            hmac.compare_digest(dummy, b"\x00" * 32)
-            ok = False
-        else:
-            got = email_mac(self.master, entry.salt, entry.id, candidate)
-            ok = hmac.compare_digest(got, entry.verifier)
-        if not ok:
-            for key, _limit in keys:
-                self.limiter.add(key, IDENTITY_WINDOW_SECONDS)
-            raise RosterError("identity_rejected")
+        if entry is None or not self._selected(entry):
+            return None
         return entry
+
+    def email_for(self, entry_id: str) -> str:
+        """Server-side only: the address the one-time code goes to."""
+        entry = self.entries.get(entry_id or "")
+        return entry.email if entry else ""
+
+    def email_matches(self, entry_id: str, email: str) -> bool:
+        entry = self.entries.get(entry_id or "")
+        if entry is None:
+            return False
+        got = email_mac(self.master, entry.salt, entry.id, email)
+        return hmac.compare_digest(got, entry.verifier)

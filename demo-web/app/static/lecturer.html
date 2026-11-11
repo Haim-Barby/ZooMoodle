@@ -1,321 +1,143 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ZooMoodle lecturer</title>
-  <link rel="icon" href="/favicon.ico" sizes="16x16">
+  <title>ZooMoodle – מרצה</title>
+  <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div id="gate" class="gate">
-    <form class="gate-card" id="unlock-form">
-      <div class="brand">
-        <div class="mark" aria-hidden="true">Z</div>
-        <div>
-          <strong>ZooMoodle</strong>
-          <div class="note">Lecturer desk</div>
-        </div>
-      </div>
-      <h1>Unlock the lesson</h1>
-      <p class="lede">The lecturer token is printed at startup when it is not set in the environment. It is not the model key, and it is not sent anywhere except this server.</p>
-      <label for="token">Lecturer token</label>
-      <input id="token" type="password" autocomplete="off" required>
-      <button id="save-token" class="btn" type="submit">Unlock dashboard</button>
-      <p id="token-state" class="note" role="status"></p>
+<main>
+  <section id="login" class="card" style="max-width:480px;margin:3rem auto">
+    <h1>ZooMoodle – כניסת מרצה</h1>
+    <form id="login-form">
+      <label for="lecturer-key">מפתח מרצה</label>
+      <input id="lecturer-key" type="password" autocomplete="off" required>
+      <p class="note">המפתח נשמר רק אצלך (בהדגמה: בקובץ ‎~/.zoomoodle/lecturer-key.txt‎). השרת שומר רק תקציר קריפטוגרפי שלו.</p>
+      <button type="submit">כניסה</button>
+      <p id="login-state" class="bad-text" role="status"></p>
     </form>
-  </div>
+  </section>
 
-  <div id="shell" class="shell" hidden>
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="mark" aria-hidden="true">Z</div>
-        <strong>ZooMoodle</strong>
-      </div>
-      <nav class="nav" aria-label="Dashboard sections">
-        <button class="nav-item selected" type="button" data-tab="overview" aria-selected="true">Overview</button>
-        <button class="nav-item" type="button" data-tab="attendance">Attendance</button>
-        <button class="nav-item" type="button" data-tab="beacon">Sound beacon</button>
-        <button class="nav-item" type="button" data-tab="attention">Attention</button>
-        <button class="nav-item" type="button" data-tab="agent">AI agent</button>
-        <button class="nav-item" type="button" data-tab="architecture">Architecture</button>
-      </nav>
-      <button id="theme" class="secondary ghost" type="button">Theme</button>
-    </aside>
-    <div class="workspace">
-      <header class="topbar">
-        <div>
-          <h1 id="lesson-title">No room yet</h1>
-          <p id="room-info" class="note">Open a room to get a student link.</p>
-        </div>
-        <div id="live-pill" class="pill">Idle</div>
-      </header>
-
-      <section class="panel" data-panel="overview">
-        <div class="grid stats">
-          <article class="card"><p class="note">In class</p><p class="stat" id="count-class">0</p></article>
-          <article class="card"><p class="note">Remote</p><p class="stat" id="count-remote">0</p></article>
-          <article class="card"><p class="note">Flagged</p><p class="stat" id="count-flagged">0</p></article>
-        </div>
-        <div class="grid two" style="margin-top:0.8rem">
-          <article class="card">
-            <h2>Room</h2>
-            <label for="title">Lesson title</label>
-            <input id="title" value="Lesson">
-            <div class="row">
-              <button id="open-room" type="button">Open room</button>
-              <button id="close-room" class="secondary" type="button" disabled>Close room</button>
-            </div>
-            <p class="note">Closing stops new check-ins. Export still works. A new room gets a new key and salt.</p>
-            <div id="open-rooms" class="note"></div>
-            <h2>Join</h2>
-            <p class="note">This QR, link, and room code open the join page for in-class and remote students. They do not prove someone is in the room. Presence stays the sound or the rotating code.</p>
-            <p id="student-link" class="link note">The public link appears here.</p>
-            <div id="qr" class="qr" hidden></div>
-            <p class="note">Code <strong id="room-code" class="mono">—</strong></p>
-          </article>
-          <article class="card">
-            <h2>This room's key</h2>
-            <p>Each room gets a new salt. The room key is derived from that salt with HKDF. The salt and the key stay on the server.</p>
-            <div class="finger"><span>Key fingerprint</span><strong id="key-fp" class="mono">—</strong></div>
-            <div class="finger"><span>Salt fingerprint</span><strong id="salt-fp" class="mono">—</strong></div>
-            <h2>Token window</h2>
-            <div id="beacon-code" class="code">—</div>
-            <p id="beacon-meta" class="note">Open a room to start the countdown.</p>
-          </article>
-        </div>
-        <article class="card">
-          <h2>Class map</h2>
-          <p class="note">Live in-class count per seat. The board is the front of the room. Remote students are not on the map.</p>
-          <div id="class-map" class="seat-map" aria-label="Students per seat zone">
-            <p class="board">Lecturer / board</p>
-          </div>
-        </article>
-        <div class="grid two">
-          <article class="card">
-            <h2>Questions</h2>
-            <p class="note">Sorted by votes. Students are not named. This list is for reading during class.</p>
-            <div id="question-list" class="note">No questions yet.</div>
-          </article>
-          <article class="card">
-            <h2>Poll</h2>
-            <label for="question">Question</label>
-            <input id="question" placeholder="What does HMAC prove?">
-            <label for="options">Options, one per line</label>
-            <textarea id="options">Integrity
-Confidentiality</textarea>
-            <label for="correct">Correct option (optional, exact text)</label>
-            <input id="correct">
-            <button id="add-poll" type="button">Ask the room</button>
-            <div id="polls"></div>
-          </article>
-        </div>
-        <article class="card">
-          <h2>Lesson summary</h2>
-          <p class="note">Students see this only after you close the room and publish it. Run the agent and edit the draft, or write the summary yourself when no model key is set.</p>
-          <input id="transcript" type="file" accept=".txt,.vtt,.srt,.md,text/plain">
-          <label for="summary-draft">Summary</label>
-          <textarea id="summary-draft" placeholder="Write a summary, or run the agent and edit the draft here."></textarea>
-          <div class="row">
-            <button id="summarize" type="button">Run lesson summary</button>
-            <button id="publish-summary" class="secondary" type="button">Publish to students</button>
-          </div>
-          <p id="summary-state" class="note" role="status"></p>
-          <pre id="summary" hidden></pre>
-        </article>
-        <article class="card">
-          <h2>Roster</h2>
-          <p class="note">Upload the class CSV. Names and a server-side email check are kept. The email itself is stored only as a salted HMAC, and a national id column, if present, is ignored. Blank groups stay out until you choose them.</p>
-          <input id="roster-file" type="file" accept=".csv,text/csv">
-          <button id="upload-roster" type="button">Import roster</button>
-          <p id="roster-status" class="note" role="status"></p>
-          <label for="roster-group">Group</label>
-          <select id="roster-group"></select>
-          <button id="use-group" class="secondary" type="button">Use this group</button>
-          <div id="roster-sheet" class="table-wrap note">No roster yet.</div>
-        </article>
-        <article class="card">
-          <h2>Hotspot presence</h2>
-          <p class="note">The checkmark needs the name, the email confirmation, the live barcode, and a phone that opened the local verifier. A claimed network name is not enough. One QR cannot both join Wi-Fi and open this app.</p>
-          <div class="row">
-            <button id="pair-helper" type="button">Pair helper</button>
-            <button id="revoke-helper" class="secondary" type="button">Revoke helper</button>
-          </div>
-          <p id="helper-status" class="note" role="status">Helper key is shown once in the box below and is not saved in this page.</p>
-          <input id="helper-key" type="password" readonly autocomplete="off" placeholder="Key appears here once">
-          <label for="network-name">Network name</label>
-          <input id="network-name" autocomplete="off" placeholder="Label for the Wi-Fi QR only">
-          <label for="bind-host">Verifier address on that network</label>
-          <input id="bind-host" autocomplete="off" placeholder="192.168.137.1 or 192.168.2.1">
-          <label for="bind-port">Verifier port</label>
-          <input id="bind-port" inputmode="numeric" value="8787">
-          <label for="client-cidr">Addresses the hotspot gives phones</label>
-          <input id="client-cidr" autocomplete="off" placeholder="192.168.137.0/24 or 192.168.2.0/24">
-          <button id="save-bind" class="secondary" type="button">Save network check</button>
-          <p id="network-diagnostics" class="note" role="status"></p>
-          <p class="note">Windows Mobile Hotspot is often 192.168.137.1 and 192.168.137.0/24. macOS Internet Sharing is often 192.168.2.1 and 192.168.2.0/24. A missing or wider range is rejected.</p>
-
-          <h2>ברקוד רץ</h2>
-          <p class="note">על המסך מוצג ברקוד חי שמרצד ומשתנה כל הזמן, כמו סרטון. הסטודנט מחזיק את המצלמה עליו במשך שתי שניות. השרת בודק גם את הקודים שנסרקו וגם שהתמונה באמת זזה, לפי השעה שלו ולא לפי השעה בטלפון. צילום מסך סטטי נדחה. הסימון מגיע רק אחרי הברקוד ואחרי בדיקת הרשת.</p>
-          <label class="row" for="screen-qr-toggle">
-            <input id="screen-qr-toggle" type="checkbox" checked style="width:auto">
-            <span>דורשים ברקוד רץ בנוסף לבדיקת הרשת</span>
-          </label>
-          <button id="save-screen-qr" class="secondary" type="button">Save rotating QR setting</button>
-          <p id="screen-qr-status" class="note" role="status"></p>
-          <div id="screen-qr-stage" class="screen-qr-stage">
-            <div id="screen-qr-frame" class="screen-qr-frame">
-              <canvas id="screen-qr-flicker" class="screen-qr-flicker" aria-hidden="true"></canvas>
-              <div id="screen-qr" class="qr screen-qr" aria-label="Flickering attendance barcode"></div>
-            </div>
-            <div class="screen-qr-meter" aria-hidden="true"><span id="screen-qr-level"></span></div>
-            <p id="screen-qr-code" class="code">—</p>
-            <p id="screen-qr-meta" class="note">Open a room to start the flickering barcode.</p>
-          </div>
-          <h2>Step 1 — Wi-Fi only</h2>
-          <p class="note">The phone asks the operating system before joining. The password is drawn into the QR on this page and is not sent to the server. The name is not proof that a phone joined.</p>
-          <label for="wifi-ssid">Network name on the QR</label>
-          <input id="wifi-ssid" autocomplete="off">
-          <label for="wifi-password">Network password</label>
-          <input id="wifi-password" type="password" autocomplete="off">
-          <button id="show-wifi-qr" class="secondary" type="button">Show Wi-Fi QR</button>
-          <div id="wifi-qr" class="qr" hidden></div>
-          <h2>Step 2 — open ZooMoodle</h2>
-          <p class="note">After the phone is on the hotspot, show the join QR above. That link does not contain the Wi-Fi password.</p>
-        </article>
-        <article class="card">
-          <h2>Lesson sources</h2>
-          <p class="note">Students can search these texts. A model is off until you enable it, and it receives only these texts.</p>
-          <label for="source-title">Title</label>
-          <input id="source-title">
-          <label for="source-text">Text</label>
-          <textarea id="source-text"></textarea>
-          <div class="row">
-            <button id="add-source" type="button">Add source</button>
-            <button id="enable-model" class="secondary" type="button">Allow model answers</button>
-          </div>
-          <p id="source-status" class="note" role="status"></p>
-        </article>
-      </section>
-
-      <section class="panel" data-panel="attendance" hidden>
-        <article class="card">
-          <h2>Attendance</h2>
-          <p class="note"><span id="attendance-band-note">In-class rows used the rotating one-time code.</span> Remote rows carry an external token. Flags mark shared devices, a second device, both modes, a late code, or a subnet mismatch.</p>
-          <div class="row">
-            <button id="refresh" class="secondary" type="button">Refresh</button>
-            <button id="csv" class="secondary" type="button">Download CSV</button>
-            <button id="xlsx" class="secondary" type="button">Download XLSX</button>
-          </div>
-          <div id="sheet" class="table-wrap"></div>
-        </article>
-      </section>
-
-      <section class="panel" data-panel="beacon" hidden>
-        <article class="card">
-          <h2>Sound beacon</h2>
-          <p class="note">Play this on the laptop speakers, not headphones. Many laptops fade out above about 17 kHz, and phones often filter ultrasound unless noise processing is off.</p>
-          <label for="audio-band">Band</label>
-          <select id="audio-band">
-            <option value="ultrasonic">Ultrasonic 18/19 kHz</option>
-            <option value="near">Near-ultrasonic 17.0/17.6 kHz</option>
-            <option value="audible">Audible demo 4.2/5.6 kHz</option>
-          </select>
-          <label for="proof">In-class proof</label>
-          <select id="proof">
-            <option value="both">Sound and rotating QR</option>
-            <option value="sound">Sound only</option>
-            <option value="qr">Rotating QR only</option>
-          </select>
-          <button id="save-proof" class="secondary" type="button">Save proof settings</button>
-          <p id="proof-state" class="note"></p>
-          <label for="volume">Volume</label>
-          <input id="volume" type="range" min="0" max="100" value="70">
-          <div class="row">
-            <button id="play" type="button" disabled>Start beacon</button>
-            <button id="stop" class="secondary" type="button" disabled>Stop</button>
-            <button id="test-tone" class="secondary" type="button">Test tone</button>
-            <button id="test-device" class="secondary" type="button">Test from this device</button>
-          </div>
-          <p id="test-device-status" class="note"></p>
-          <h2>Rotating code</h2>
-          <p class="note">The same HMAC window as the sound. It changes with the token. A phone can scan it or type it. Campus subnet is checked only when ZOOMODLE_ALLOWED_SUBNETS is set.</p>
-          <div id="rotating-qr" class="qr"></div>
-          <p id="rotating-code" class="code">—</p>
-          <canvas id="wave" class="wave" width="640" height="88"></canvas>
-          <div class="meter" aria-hidden="true"><span id="beacon-level"></span></div>
-          <p id="beacon-level-text" class="note">Beacon is off.</p>
-          <h2>Anti-relay</h2>
-          <p>The code is an HMAC over this room's key. It is valid for the current window and one grace window. Each device can redeem a code once, so a recording shared a few seconds later fails, and a second phone that replays the same code is rejected.</p>
-        </article>
-      </section>
-
-      <section class="panel" data-panel="attention" hidden>
-        <article class="card">
-          <h2>Attention</h2>
-          <p class="banner">Optional and local. Turning on the camera shows a preview on this laptop only. Video is not uploaded, stored, or used to recognize anyone. The map is zone aggregates from labeled samples, not a grade.</p>
-          <label class="row" for="camera-toggle">
-            <input id="camera-toggle" type="checkbox" style="width:auto">
-            <span>Connect a camera on this device</span>
-          </label>
-          <p id="camera-state" class="note">No camera is connected. The rest of the dashboard does not need one.</p>
-          <video id="camera-preview" class="preview" autoplay playsinline muted hidden></video>
-          <div class="row">
-            <button id="sample-attention" class="secondary" type="button">Load sample zone aggregates</button>
-          </div>
-          <div id="attention-map" class="zone-map"></div>
-          <pre id="attention">No samples.</pre>
-        </article>
-      </section>
-
-      <section class="panel" data-panel="agent" hidden>
-        <article class="card">
-          <h2>Model connection</h2>
-          <div id="key-banner" class="banner">Configure a key before running the agent. Nothing is sent to a model until a key is saved.</div>
-          <label for="provider">Provider</label>
-          <select id="provider">
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="gemini">Google Gemini</option>
-            <option value="xai">xAI</option>
-            <option value="ollama">Ollama (OpenAI-compatible)</option>
-            <option value="openai_compatible">Other OpenAI-compatible endpoint</option>
-          </select>
-          <label for="model">Model</label>
-          <input id="model" placeholder="gpt-4o-mini">
-          <label for="base-url">Base URL (blank uses the provider default)</label>
-          <input id="base-url" placeholder="https://api.openai.com/v1">
-          <label for="api-key">API key (kept in server memory, never shown again)</label>
-          <input id="api-key" type="password" autocomplete="off">
-          <div class="row">
-            <button id="save-llm" type="button">Save settings</button>
-            <button id="test-llm" class="secondary" type="button">Test connection</button>
-          </div>
-          <p id="llm-state" class="note" role="status"></p>
-        </article>
-        <article class="card">
-          <h2>Homework</h2>
-          <div id="homework" class="note">No submissions.</div>
-        </article>
-      </section>
-
-      <section class="panel" data-panel="architecture" hidden>
-        <article class="card">
-          <h2>Architecture</h2>
-          <p class="note">The design diagrams shipped with the project. Click one to zoom.</p>
-          <div id="gallery" class="gallery"></div>
-        </article>
-      </section>
+  <section id="home" hidden>
+    <div class="card row" style="justify-content:space-between">
+      <div id="greeting" class="greeting"></div>
+      <button id="logout" class="ghost" type="button">יציאה</button>
     </div>
-  </div>
+    <div class="card">
+      <h2>שיעור חדש</h2>
+      <div class="row">
+        <input id="room-title" placeholder="שם השיעור (לא חובה)" style="flex:1">
+        <button id="new-room" type="button">פתח שיעור חדש</button>
+      </div>
+      <div id="open-rooms" class="note"></div>
+    </div>
+  </section>
 
-  <dialog id="lightbox" class="lightbox">
-    <button id="lightbox-close" class="secondary" type="button">Close</button>
-    <img id="lightbox-img" alt="">
-  </dialog>
+  <section id="room" hidden>
+    <div class="card row" style="justify-content:space-between">
+      <div><div id="room-greeting" class="greeting"></div><div id="room-title-view" class="note"></div></div>
+      <div class="row">
+        <a id="export-csv" class="btn" href="#">CSV</a>
+        <a id="export-xlsx" class="btn" href="#">Excel</a>
+        <button id="close-room" class="bad" type="button">סגור שיעור</button>
+      </div>
+    </div>
 
-  <script src="/static/qr.js"></script>
-  <script src="/static/fsk.js"></script>
-  <script src="/static/lecturer.js"></script>
+    <div class="grid">
+      <div class="card">
+        <h2>1. הצטרפות – סורקים כדי להיכנס לאתר</h2>
+        <div id="join-qr" class="join-qr"></div>
+        <p><a id="join-link" href="#" target="_blank" rel="noopener"></a></p>
+        <label for="roster-file">רשימת הכיתה (CSV: שם פרטי, שם משפחה, דוא״ל)</label>
+        <input id="roster-file" type="file" accept=".csv,text/csv">
+        <p id="roster-state" class="note">המיילים נשמרים בשרת בלבד ולא מוצגים לאף אחד.</p>
+      </div>
+      <div class="card">
+        <h2>2. ברקוד חי – נוכחות בכיתה</h2>
+        <div class="live-frame" id="live-frame">
+          <canvas id="flicker"></canvas>
+          <div id="live-qr" class="live-qr"></div>
+        </div>
+        <div class="bar" style="margin-top:.6rem"><span id="live-level"></span></div>
+        <p class="note">הקוד מתחלף כל רבע שנייה והמסגרת מרצדת. סטודנט בכיתה צריך להיות ברשת האוניברסיטה ולהחזיק את המצלמה 2 שניות. צילום מסך נדחה.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>לוח המרצה</h2>
+      <div class="stats">
+        <div class="stat"><b id="c-in">0</b>בכיתה ✓</div>
+        <div class="stat"><b id="c-remote">0</b>מרחוק ✓</div>
+        <div class="stat"><b id="c-pending">0</b>בתהליך</div>
+        <div class="stat"><b id="c-conflicts">0</b>שמות כפולים</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>שמות כפולים – החלטת מרצה</h2>
+        <div id="conflicts" class="note">אין כרגע.</div>
+      </div>
+      <div class="card">
+        <h2>מפת הכיתה</h2>
+        <div id="zone-map" class="zones"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>רשימת נוכחות</h2>
+      <table><thead><tr><th>✓</th><th>שם</th><th>אופן</th><th>מצב</th><th>אזור</th></tr></thead><tbody id="students"></tbody></table>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>סקר</h2>
+        <input id="poll-q" placeholder="שאלה">
+        <input id="poll-opts" placeholder="תשובות מופרדות בפסיק" style="margin-top:.4rem">
+        <input id="poll-correct" placeholder="תשובה נכונה (לא חובה)" style="margin-top:.4rem">
+        <button id="poll-create" type="button" style="margin-top:.5rem">פתח סקר</button>
+        <div id="polls"></div>
+      </div>
+      <div class="card">
+        <h2>שאלות (לפי הצבעות)</h2>
+        <ul id="questions" class="plain"></ul>
+        <h2 style="margin-top:1rem">הערות</h2>
+        <ul id="comments" class="plain"></ul>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>שיעורי בית</h2>
+        <input id="hw-title" placeholder="כותרת">
+        <input id="hw-file" type="file" style="margin-top:.4rem">
+        <button id="hw-upload" type="button" style="margin-top:.5rem">העלה קובץ</button>
+        <ul id="homework" class="plain"></ul>
+      </div>
+      <div class="card">
+        <h2>סיכום שיעור (רשות)</h2>
+        <label for="transcript">תמלול השיעור המוקלט (לא חובה)</label>
+        <input id="transcript" type="file" accept=".txt,.vtt,.srt,text/plain">
+        <div class="row">
+          <select id="llm-provider" style="flex:1">
+            <option value="openai">OpenAI</option><option value="anthropic">Anthropic</option>
+            <option value="gemini">Gemini</option><option value="xai">xAI</option>
+          </select>
+          <input id="llm-model" placeholder="מודל, למשל gpt-4o-mini" style="flex:1">
+        </div>
+        <input id="llm-key" type="password" autocomplete="off" placeholder="מפתח API – לא נשמר" style="margin-top:.4rem">
+        <button id="summary-generate" type="button" style="margin-top:.5rem">צור סיכום ושלח לסטודנטים</button>
+        <label for="summary-text">או כתוב סיכום בעצמך</label>
+        <textarea id="summary-text"></textarea>
+        <button id="summary-publish" class="ghost" type="button" style="margin-top:.4rem">פרסם</button>
+        <p id="summary-state" class="note"></p>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/static/qr.js"></script>
+<script src="/static/lecturer.js"></script>
 </body>
 </html>

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
+import json
 import os
 import re
 import sys
@@ -14,145 +12,149 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app.attendance import CheckInError
+from app.checkin import ACTIVE_STATES, CONFLICT_STATES, PRESENT, REJECTED, REMOTE, CheckinError
 from app.config import Settings
 from app.export_svc import ExportService
-from app.llm.agent import AgentError, HomeworkReviewService, SummaryService
-from app.llm.providers import ChatMessage
-from app.presence import PresenceError
-from app.roster import RosterError
-from app.sources import add_source, prompt_for_model, search_sources
-from app.llm.providers import (
-    KEY_OPTIONAL,
-    KNOWN_PROVIDERS,
-    ConnectResult,
-    LLMClient,
-    LLMConfig,
-    ProviderFailure,
-    build_provider,
-)
-from app.domain import SEAT_ZONES
+from app.lecturer_auth import LecturerAuth, LecturerAuthError
+from app.llm.agent import AgentError, SummaryService
+from app.llm.providers import KEY_OPTIONAL, KNOWN_PROVIDERS, LLMClient, LLMConfig, ProviderFailure, build_provider
+from app.mailer import Mailer
 from app.net import client_ip, subnet_status
+from app.roster import RosterError
 from app.session_keys import SessionError, canonical_message
 from app.store import Store, StoreError
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DIAGRAM_DIR = Path(__file__).resolve().parents[2] / "docs" / "diagrams"
-AUDIO_BANDS = ("ultrasonic", "near", "audible")
-PROOF_METHODS = ("sound", "qr", "both")
-DIAGRAM_TITLES = {
-    "classes": "Class diagram",
-    "components": "Components",
-    "seq-checkin": "Sequence: in-class check-in",
-}
-NOT_CONFIGURED = (
-    "No LLM API key is configured. On the lecturer page, choose a provider, "
-    "enter a key, and press Test connection. No model was called."
-)
-MISSING_KEY_MESSAGE = "Enter an API key first."
 EXPORTS = ExportService()
+STATE_TEXT = {
+    "remote": "מחובר מרחוק",
+    "pending_barcode": "ממתין לסריקת הברקוד החי",
+    "needs_area": "ממתין לבחירת אזור בכיתה",
+    "present": "נוכח בכיתה",
+    "flagged_remote": "בבדיקה: השם נבחר גם במקום אחר",
+    "repick": "צריך לבחור שוב את השם",
+    "email_code": "ממתין לקוד מהמייל",
+    "lecturer_decision": "המרצה יחליט",
+    "rejected": "נדחה",
+}
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     _announce(settings)
     app = FastAPI(title="ZooMoodle")
     app.state.settings = settings
-    app.state.store = Store(settings)
+    app.state.store = Store(settings, mailer)
+    app.state.auth = LecturerAuth(settings.master_secret, settings.lecturer_key)
     app.state.http_transport = None
     app.state.provider_factory = None
 
+    def lecturer(request: Request) -> None:
+        if not app.state.auth.check(request.headers.get("x-lecturer-session", "")):
+            raise StoreError("lecturer_required", 401)
+
+    def is_lecturer(request: Request) -> bool:
+        return app.state.auth.check(request.headers.get("x-lecturer-session", ""))
+
+    def room_of(room_id: str):
+        return app.state.store.get(room_id)
+
+    def open_room(room_id: str):
+        room = room_of(room_id)
+        if room.closed:
+            raise StoreError("room_closed", 409)
+        return room
+
+    def on_campus(request: Request) -> bool:
+        ip = client_ip(dict(request.headers), request.client.host if request.client else None, settings.trusted_proxies)
+        return subnet_status(ip, settings.campus_ranges) == "match"
+
+    def claim_for(room, session):
+        try:
+            return room.checkin.get(session.student_id)
+        except CheckinError as exc:
+            raise StoreError("session_mismatch", 401) from exc
+
+    def active_claim(request: Request, room, raw: bytes, write: bool):
+        claim = claim_for(room, _require_session(request, room, raw, write=write))
+        if claim.state not in ACTIVE_STATES:
+            raise StoreError("not_checked_in", 403)
+        return claim
+
+    # ----- pages ---------------------------------------------------------
     @app.get("/api/health")
     def health():
-        return {
-            "status": "ok",
-            "ephemeral_master_secret": settings.ephemeral_master_secret,
-            "llm_configured": _llm_ready(app.state.store.llm),
-        }
+        return {"status": "ok", "ephemeral_master_secret": settings.ephemeral_master_secret}
 
     @app.get("/")
     def lecturer_page():
         return FileResponse(STATIC_DIR / "lecturer.html")
 
-    @app.get("/favicon.ico", include_in_schema=False)
-    def favicon():
-        return FileResponse(STATIC_DIR / "favicon.ico", media_type="image/x-icon")
-
     @app.get("/student")
     def student_page():
         return FileResponse(STATIC_DIR / "student.html")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        return FileResponse(STATIC_DIR / "favicon.ico", media_type="image/x-icon")
+
+    # ----- lecturer sign-in ----------------------------------------------
+    @app.post("/api/lecturer/login")
+    async def lecturer_login(request: Request):
+        body = await _json(request)
+        try:
+            token = app.state.auth.sign_in(str(body.get("key") or ""))
+        except LecturerAuthError as exc:
+            raise StoreError(exc.reason, exc.status) from exc
+        return {"token": token, **_profile(settings)}
+
+    @app.get("/api/lecturer/me")
+    def lecturer_me(request: Request):
+        lecturer(request)
+        return _profile(settings)
+
+    @app.post("/api/lecturer/logout")
+    def lecturer_logout(request: Request):
+        app.state.auth.sign_out(request.headers.get("x-lecturer-session", ""))
+        return {"ok": True}
+
+    # ----- rooms -------------------------------------------------------------
     @app.post("/api/rooms")
     async def create_room(request: Request):
-        _require_lecturer(request)
+        lecturer(request)
         body = await _json(request)
-        room = app.state.store.create_room(str(body.get("title") or ""))
-        return _room_link(request, room)
+        return _room_link(request, app.state.store.create_room(str(body.get("title") or "")))
 
     @app.get("/api/rooms")
     def list_rooms(request: Request):
-        _require_lecturer(request)
-        rooms = [room for room in app.state.store.rooms.values() if not room.closed]
-        return {"rooms": [_room_link(request, room) | {"counts": _attendance_counts(room)} for room in rooms]}
+        lecturer(request)
+        return {"rooms": [_room_link(request, r) for r in app.state.store.rooms.values() if not r.closed]}
 
     @app.get("/api/rooms/{room_id}")
     def public_room(room_id: str, request: Request):
-        room = _room(app, room_id)
-        return _room_link(request, room)
-
-    @app.get("/api/rooms/{room_id}/counts")
-    async def room_counts(room_id: str, request: Request):
-        """Headcounts only. No names, ids, tokens, or keys. Signed by the student session."""
-        room = _room(app, room_id)
-        _require_session(request, room, await request.body(), write=False)
-        counts = _attendance_counts(room)
-        return {
-            "title": room.title,
-            "closed": bool(room.closed),
-            "in_class": counts["in_class"],
-            "remote": counts["remote"],
-        }
-
-    @app.get("/api/rooms/{room_id}/overview")
-    def room_overview(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        store = app.state.store
-        token = store.current_token(room_id)
-        now = store.tokens.now()
-        window_end = (token.window + 1) * store.tokens.window_seconds
+        room = room_of(room_id)
         return {
             "id": room.id,
             "title": room.title,
             "closed": room.closed,
-            "audio_band": room.audio_band,
-            "proof": room.proof,
-            "student_path": f"/student?room={room.id}",
-            "student_url": _public_origin(request) + f"/student?room={room.id}",
-            "key_fingerprint": _fingerprint(room.key),
-            "salt_fingerprint": _fingerprint(room.salt),
-            "counts": _attendance_counts(room),
-            "zones": _zone_counts(room),
-            "token": {
-                "code": token.code,
-                "window": token.window,
-                "seconds_left": round(max(0.0, window_end - now), 2),
-                "window_seconds": store.tokens.window_seconds,
-            },
+            "course": settings.course_name,
+            "week": settings.course_week,
+            **room.screen_qr.public_params(),
         }
 
-    @app.post("/api/rooms/{room_id}/remote-join")
-    def remote_join(room_id: str):
-        room = _open_room(app, room_id)
-        record = room.attendance.mark_remote(room.attendance.tokens.now())
-        issued = _issue_session(room, record.attendance_id)
-        return {"mode": "remote", "marker": record.attendance_id, **issued}
+    @app.post("/api/rooms/{room_id}/close")
+    def close_room(room_id: str, request: Request):
+        lecturer(request)
+        room = app.state.store.close_room(room_id)
+        room.sessions.revoke_all()
+        return {"id": room.id, "closed": True}
 
     @app.post("/api/rooms/{room_id}/roster")
     async def upload_roster(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        text = await _roster_text(request)
+        lecturer(request)
+        room = room_of(room_id)
+        text = await _upload_text(request, "text")
         if len(text) > 1_000_000:
             raise StoreError("roster_too_large", 400)
         try:
@@ -161,732 +163,342 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise StoreError(exc.reason, 400) from exc
 
     @app.post("/api/rooms/{room_id}/roster/group")
-    async def select_roster_group(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
+    async def select_group(room_id: str, request: Request):
+        lecturer(request)
+        room = room_of(room_id)
         body = await _json(request)
+        if body.get("all"):
+            room.roster.selected_group = None
+            room.roster.include_unspecified = False
+            return {"group": "", "listed": len(room.roster.public_names())}
         try:
             return room.roster.select_group(body.get("group"), bool(body.get("include_unspecified")))
         except RosterError as exc:
             raise StoreError(exc.reason, 400) from exc
 
-    @app.get("/api/rooms/{room_id}/roster")
-    def lecturer_roster(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        return {
-            "group": room.roster.selected_group or "",
-            "include_unspecified": room.roster.include_unspecified,
-            "entries": room.roster.lecturer_rows(room.presence.in_class, room.presence.remote),
-        }
-
     @app.get("/api/rooms/{room_id}/roster/names")
     def roster_names(room_id: str):
-        room = _open_room(app, room_id)
-        return {"names": room.roster.public_names()}
+        return {"names": open_room(room_id).roster.public_names()}
 
-    @app.post("/api/rooms/{room_id}/roster/identify")
-    async def identify_student(room_id: str, request: Request):
-        room = _open_room(app, room_id)
-        body = await _json(request)
-        ip = client_ip(
-            dict(request.headers),
-            request.client.host if request.client else None,
-            app.state.settings.trusted_proxies,
-        )
-        try:
-            entry = room.roster.verify_email(
-                str(body.get("entry_id") or ""),
-                str(body.get("email") or ""),
-                ip,
-                str(body.get("attempt") or ""),
-            )
-        except RosterError as exc:
-            raise StoreError(exc.reason, 401 if exc.reason != "identity_limited" else 429) from exc
-        issued = _issue_session(room, entry.id)
-        try:
-            challenge = room.presence.issue(room.id, entry.id, issued["session_id"])
-        except PresenceError as exc:
-            challenge = None
-            if exc.reason != "presence_unavailable":
-                raise StoreError(exc.reason, 409) from exc
-        payload = {
-            "ok": True,
-            "display": entry.display,
-            "entry_id": entry.id,
-            **issued,
-            "presence": "ready" if challenge else "unavailable",
-            "qr_required": room.presence.qr_required,
-            **room.presence.screen_qr.public_params(),
-        }
-        if challenge is not None:
-            payload["challenge_id"] = challenge.id
-            payload["bind_url"] = room.presence.bind_url
-        return payload
-
-    @app.post("/api/rooms/{room_id}/roster/remote")
-    async def roster_remote(room_id: str, request: Request):
-        raw = await request.body()
-        room = _open_room(app, room_id)
-        session = _require_session(request, room, raw, write=True)
-        if session.student_id not in room.roster.entries:
-            raise StoreError("identity_rejected", 401)
-        room.presence.mark_remote(session.student_id)
-        record = room.attendance.mark_remote(room.attendance.tokens.now())
-        return {"mode": "remote", "marker": record.attendance_id, "in_class": False}
-
-    @app.post("/api/rooms/{room_id}/presence/pair")
-    def pair_helper(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        helper_id, helper_key = room.presence.pair()
-        return {"helper_id": helper_id, "helper_key": helper_key}
-
-    @app.post("/api/rooms/{room_id}/presence/revoke")
-    def revoke_helper(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        room.presence.revoke_helper()
-        return {"helper_paired": False}
-
-    @app.post("/api/rooms/{room_id}/presence/bind")
-    async def bind_helper(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        body = await _json(request)
-        try:
-            return room.presence.set_network(
-                str(body.get("network_name") or ""),
-                str(body.get("bind_host") or ""),
-                str(body.get("client_cidr") or ""),
-                body.get("bind_port") or 8787,
-            )
-        except PresenceError as exc:
-            raise StoreError(exc.reason, 400) from exc
-
-    @app.get("/api/rooms/{room_id}/presence")
-    def presence_status(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        status = room.presence.public_status()
-        status["closed"] = room.closed
-        return status
-
-    @app.post("/api/rooms/{room_id}/presence/observe")
-    async def observe_presence(room_id: str, request: Request):
-        raw = await request.body()
-        room = _room(app, room_id)
-        try:
-            room.presence.observe(
-                room.id,
-                raw,
-                canonical_message(
-                    request.method,
-                    _signed_target(request),
-                    raw,
-                    request.headers.get("x-zoomoodle-timestamp", ""),
-                    request.headers.get("x-zoomoodle-nonce", ""),
-                ),
-                request.headers.get("x-zoomoodle-signature", ""),
-                request.headers.get("x-zoomoodle-nonce", ""),
-                request.headers.get("x-zoomoodle-timestamp", ""),
-            )
-        except PresenceError as exc:
-            if exc.reason in {"bad_helper", "session_expired", "session_replay"}:
-                status = 401
-            elif exc.reason in {"wrong_interface", "peer_out_of_range"}:
-                status = 403
-            elif exc.reason in {"missing_network", "bad_network", "bind_outside_range", "range_too_wide", "public_range"}:
-                status = 400
-            else:
-                status = 409
-            raise StoreError(exc.reason, status) from exc
-        return {"ok": True}
-
-    @app.post("/api/rooms/{room_id}/presence/finish")
-    async def finish_presence(room_id: str, request: Request):
-        raw = await request.body()
-        room = _room(app, room_id)
-        session = _require_session(request, room, raw, write=True)
-        body = _body_dict(raw)
-        try:
-            room.presence.finish(room.id, session.id, session.student_id, str(body.get("challenge_id") or ""))
-        except PresenceError as exc:
-            raise StoreError(exc.reason, 409) from exc
-        entry = room.roster.entries.get(session.student_id)
-        display = entry.display if entry else ""
-        room.attendance.mark_hotspot(session.student_id, display, room.attendance.tokens.now())
-        return {"ok": True, "in_class": True, "display": display}
-
-    @app.post("/api/rooms/{room_id}/presence/screen-qr/settings")
-    async def set_screen_qr_settings(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        body = await _json(request)
-        if "required" not in body:
-            raise StoreError("bad_qr_setting", 400)
-        return room.presence.set_qr_required(bool(body.get("required")))
-
-    @app.get("/api/rooms/{room_id}/presence/screen-qr")
-    def current_screen_qr(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        if room.closed:
-            raise StoreError("room_closed", 409)
-        frame = room.presence.screen_qr.issue(room.key, room.id)
+    # ----- live barcode -------------------------------------------------------
+    @app.get("/api/rooms/{room_id}/barcode")
+    def barcode(room_id: str, request: Request):
+        lecturer(request)
+        room = open_room(room_id)
+        frame = room.screen_qr.issue(room.key, room.id)
         return {
             "code": frame.code,
             "slot": frame.slot,
-            "issued_at": frame.issued_at,
             "expires_in": round(frame.expires_in, 3),
-            "flicker_seed": room.presence.screen_qr.flicker_seed(room.key, room.id),
-            "qr_required": room.presence.qr_required,
-            **room.presence.screen_qr.public_params(),
+            "flicker_seed": room.screen_qr.flicker_seed(room.key, room.id),
+            **room.screen_qr.public_params(),
         }
 
-    @app.post("/api/rooms/{room_id}/presence/screen-qr")
-    async def submit_screen_qr(room_id: str, request: Request):
+    # ----- student check-in ---------------------------------------------------
+    @app.post("/api/rooms/{room_id}/join")
+    async def join(room_id: str, request: Request):
+        room = open_room(room_id)
+        body = await _json(request)
+        mode = str(body.get("mode") or "")
+        try:
+            claim = room.checkin.join(str(body.get("entry_id") or ""), mode, mode == "in_class" and on_campus(request))
+        except CheckinError as exc:
+            raise StoreError(exc.reason, exc.status) from exc
+        session_id, session_key = room.sessions.issue(claim.id)
+        return {"session_id": session_id, "session_key": session_key, **_me(room, claim)}
+
+    @app.get("/api/rooms/{room_id}/me")
+    async def me(room_id: str, request: Request):
+        room = room_of(room_id)
+        room.checkin.expire()
+        claim = claim_for(room, _require_session(request, room, await request.body(), write=False))
+        return _me(room, claim)
+
+    @app.post("/api/rooms/{room_id}/barcode")
+    async def submit_barcode(room_id: str, request: Request):
         raw = await request.body()
-        room = _open_room(app, room_id)
-        session = _require_session(request, room, raw, write=True)
+        room = open_room(room_id)
+        claim = claim_for(room, _require_session(request, room, raw, write=True))
         body = _body_dict(raw)
         try:
-            room.presence.accept_screen_qr(
-                room.id,
-                session.student_id,
-                session.id,
-                body.get("codes"),
-                room.key,
-            )
-        except PresenceError as exc:
-            status = 401 if exc.reason == "qr_mismatch" else 409
-            raise StoreError(exc.reason, status) from exc
-        entry = room.roster.entries.get(session.student_id)
-        network_ready = any(
-            challenge.room_id == room.id
-            and challenge.entry_id == session.student_id
-            and challenge.session_id == session.id
-            and challenge.observed
-            and not challenge.used
-            for challenge in room.presence.challenges.values()
-        )
+            room.checkin.submit_barcode(claim, body.get("codes"), on_campus(request), room.key, room.id)
+        except CheckinError as exc:
+            raise StoreError(exc.reason, exc.status) from exc
+        return _me(room, claim)
+
+    @app.post("/api/rooms/{room_id}/area")
+    async def choose_area(room_id: str, request: Request):
+        raw = await request.body()
+        room = open_room(room_id)
+        claim = claim_for(room, _require_session(request, room, raw, write=True))
+        try:
+            room.checkin.choose_area(claim, str(_body_dict(raw).get("zone") or ""))
+        except CheckinError as exc:
+            raise StoreError(exc.reason, exc.status) from exc
+        return _me(room, claim)
+
+    @app.post("/api/rooms/{room_id}/repick")
+    async def repick(room_id: str, request: Request):
+        raw = await request.body()
+        room = open_room(room_id)
+        claim = claim_for(room, _require_session(request, room, raw, write=True))
+        try:
+            room.checkin.repick(claim, str(_body_dict(raw).get("entry_id") or ""))
+        except CheckinError as exc:
+            raise StoreError(exc.reason, exc.status) from exc
+        return _me(room, claim)
+
+    @app.post("/api/rooms/{room_id}/email-code")
+    async def email_code(room_id: str, request: Request):
+        raw = await request.body()
+        room = open_room(room_id)
+        claim = claim_for(room, _require_session(request, room, raw, write=True))
+        try:
+            room.checkin.submit_code(claim, str(_body_dict(raw).get("code") or ""))
+        except CheckinError as exc:
+            raise StoreError(exc.reason, exc.status) from exc
+        return _me(room, claim)
+
+    # ----- lecturer dashboard ---------------------------------------------------
+    @app.get("/api/rooms/{room_id}/dashboard")
+    def dashboard(room_id: str, request: Request):
+        lecturer(request)
+        room = room_of(room_id)
+        room.checkin.expire()
         return {
-            "ok": True,
-            "qr": "ready",
-            "network": "ready" if network_ready else "pending",
-            "in_class": False,
-            "display": entry.display if entry else "",
+            **_room_link(request, room),
+            "greeting": settings.greeting,
+            "counts": room.checkin.counts(),
+            "zones": room.checkin.zone_counts(),
+            "roster_size": len(room.roster.public_names()),
+            "students": _students(room),
+            "conflicts": _conflicts(room),
+            "comments": [
+                {"id": c.id, "name": _name_of(room, c.student_id), "text": c.text, "at": c.at} for c in room.comments
+            ],
+            "questions": [
+                {"id": q.id, "name": _name_of(room, q.student_id), "text": q.text, "votes": len(q.upvotes)}
+                for q in app.state.store.questions_by_votes(room)
+            ],
+            "polls": [_poll_dict(p, lecturer=True) for p in room.polls],
+            "homework": [_homework_dict(h) for h in room.homework],
+            "summary": room.summary,
+            "summary_source": room.summary_source,
+            "email_mode": "smtp" if app.state.store.mailer.configured else "demo",
         }
 
-    @app.post("/api/rooms/{room_id}/sources")
-    async def create_source(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
+    @app.post("/api/rooms/{room_id}/conflicts/decide")
+    async def decide(room_id: str, request: Request):
+        lecturer(request)
+        room = room_of(room_id)
         body = await _json(request)
-        source = add_source(room, str(body.get("title") or ""), str(body.get("text") or ""))
-        return {"id": source.id, "title": source.title}
-
-    @app.get("/api/rooms/{room_id}/sources")
-    def list_sources(room_id: str):
-        room = _room(app, room_id)
-        return {"sources": [{"id": source.id, "title": source.title} for source in room.sources]}
-
-    @app.post("/api/rooms/{room_id}/ask")
-    async def ask_sources(room_id: str, request: Request):
-        room = _open_room(app, room_id)
-        body = await _json(request)
-        question = str(body.get("question") or "").strip()
-        source_ids = body.get("source_ids") if isinstance(body.get("source_ids"), list) else None
-        if not question:
-            raise StoreError("missing_question")
-        searched = search_sources(room.sources, question, source_ids)
-        if not room.allow_model_qa:
-            searched["model"] = "off"
-            return searched
-        if not _llm_ready(app.state.store.llm):
-            searched["model"] = "unavailable"
-            searched["answer"] = "No model key is configured. " + searched["answer"]
-            return searched
-        prompt = prompt_for_model(room.sources, question, source_ids)
         try:
-            result = _client_factory(app)().complete(
-                [
-                    ChatMessage("system", "You answer only from the sources the user pasted. You do not invent citations."),
-                    ChatMessage("user", prompt),
-                ],
-                [],
-            )
-        except Exception as exc:
-            raise StoreError(getattr(exc, "message", "model_unavailable"), 502) from exc
-        return {"mode": "model", "model": "on", "answer": result.text or "", "snippets": searched["snippets"]}
-
-    @app.post("/api/rooms/{room_id}/sources/model")
-    async def set_model_qa(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        body = await _json(request)
-        room.allow_model_qa = bool(body.get("enabled"))
-        return {"enabled": room.allow_model_qa, "ready": _llm_ready(app.state.store.llm)}
-
-    @app.post("/api/rooms/{room_id}/lesson-settings")
-    async def lesson_settings(room_id: str, request: Request):
-        _require_lecturer(request)
-        body = await _json(request)
-        room = _room(app, room_id)
-        band = body.get("audio_band")
-        proof = body.get("proof")
-        if band is not None:
-            if band not in AUDIO_BANDS:
-                raise StoreError("bad_band", 400)
-            room.audio_band = band
-        if proof is not None:
-            if proof not in PROOF_METHODS:
-                raise StoreError("bad_proof", 400)
-            room.proof = proof
-        return {"audio_band": room.audio_band, "proof": room.proof}
-
-    @app.post("/api/rooms/{room_id}/close")
-    def close_room(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = app.state.store.close_room(room_id)
-        return {"id": room.id, "closed": True}
-
-    @app.get("/api/diagrams")
-    def diagrams():
-        return {"diagrams": _diagram_entries()}
-
-    @app.get("/api/rooms/{room_id}/token")
-    def current_token(room_id: str, request: Request):
-        _require_lecturer(request)
-        store = app.state.store
-        token = store.current_token(room_id)
-        now = store.tokens.now()
-        window_end = (token.window + 1) * store.tokens.window_seconds
-        return {
-            "code": token.code,
-            "payload_hex": token.payload.hex(),
-            "window": token.window,
-            "issued_at": token.issued_at,
-            "seconds_left": round(max(0.0, window_end - now), 2),
-        }
-
-    @app.post("/api/rooms/{room_id}/challenge")
-    async def challenge(room_id: str, request: Request):
-        body = await _json(request)
-        room = _open_room(app, room_id)
-        try:
-            opened = room.attendance.open_challenge(
-                str(body.get("student_id") or ""),
-                str(body.get("device_id") or ""),
-                body.get("public_jwk") or {},
-                room.attendance.tokens.now(),
-            )
-        except CheckInError as exc:
-            raise StoreError(exc.reason, 400) from exc
-        return {"challenge_id": opened.id, "nonce": opened.nonce, "expires_in": settings.challenge_max_age_seconds}
-
-    @app.post("/api/rooms/{room_id}/checkin")
-    async def checkin(room_id: str, request: Request):
-        body = await _json(request)
-        room = _open_room(app, room_id)
-        try:
-            signature = _decode_signature(str(body.get("signature") or ""))
-        except Exception as exc:
-            raise StoreError("bad_signature", 400) from exc
-        ip = client_ip(
-            dict(request.headers),
-            request.client.host if request.client else None,
-            settings.trusted_proxies,
-        )
-        subnet = "not_applicable"
-        mode = str(body.get("mode") or "")
-        if mode == "in_class":
-            subnet = subnet_status(ip, settings.allowed_subnets)
-        try:
-            outcome = room.attendance.check_in(
-                challenge_id=str(body.get("challenge_id") or ""),
-                signature=signature,
-                mode=mode,
-                token_code=body.get("token_code"),
-                seat_zone=str(body.get("seat_zone") or ""),
-                subnet=subnet,
-                room_key=room.key,
-                room_id=room.id,
-                student_name=str(body.get("student_name") or ""),
-                now=room.attendance.tokens.now(),
-            )
-        except CheckInError as exc:
-            raise StoreError(exc.reason, 400) from exc
-        record = outcome.record
-        if record.student_name:
-            room.names[record.student_id] = record.student_name
-        payload = {
-            "ok": True,
-            "mode": record.mode,
-            "confidence": record.confidence,
-            "flags": list(record.flags),
-            "seat_zone": record.seat_zone,
-            "subnet": record.subnet,
-            "student_id": record.student_id,
-        }
-        if record.external_token:
-            payload["external_token"] = record.external_token
-        if record.attendance_id:
-            payload["attendance_id"] = record.attendance_id
-        identity = record.attendance_id or record.student_id
-        if identity:
-            payload.update(_issue_session(room, identity))
-        return payload
-
-    @app.get("/api/rooms/{room_id}/attendance")
-    def attendance(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        return {"records": [_record_dict(record, room) for record in room.attendance.records]}
+            claim = room.checkin.decide(str(body.get("claim_id") or ""), str(body.get("action") or ""))
+        except CheckinError as exc:
+            raise StoreError(exc.reason, exc.status) from exc
+        return {"claim_id": claim.id, "state": claim.state}
 
     @app.get("/api/rooms/{room_id}/export.csv")
     def export_csv(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        data = EXPORTS.to_csv(room.attendance.records)
+        lecturer(request)
+        room = room_of(room_id)
         return Response(
-            content=data,
+            EXPORTS.to_csv(_students(room)),
             media_type="text/csv",
             headers={"content-disposition": f'attachment; filename="{room.id}-attendance.csv"'},
         )
 
     @app.get("/api/rooms/{room_id}/export.xlsx")
     def export_xlsx(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        data = EXPORTS.to_xlsx(room.attendance.records)
+        lecturer(request)
+        room = room_of(room_id)
         return Response(
-            content=data,
+            EXPORTS.to_xlsx(_students(room)),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"content-disposition": f'attachment; filename="{room.id}-attendance.xlsx"'},
         )
 
+    # ----- polls, notes, questions ----------------------------------------------
     @app.post("/api/rooms/{room_id}/polls")
     async def create_poll(room_id: str, request: Request):
-        _require_lecturer(request)
+        lecturer(request)
+        room = open_room(room_id)
         body = await _json(request)
-        poll = app.state.store.add_poll(
-            room_id,
-            str(body.get("question") or ""),
-            list(body.get("options") or []),
-            body.get("correct_option"),
-        )
+        poll = app.state.store.add_poll(room, str(body.get("question") or ""), list(body.get("options") or []), body.get("correct_option"))
+        return _poll_dict(poll, lecturer=True)
+
+    @app.post("/api/rooms/{room_id}/polls/{poll_id}/close")
+    def close_poll(room_id: str, poll_id: str, request: Request):
+        lecturer(request)
+        room = room_of(room_id)
+        poll = next((p for p in room.polls if p.id == poll_id), None)
+        if poll is None:
+            raise StoreError("unknown_poll", 404)
+        poll.open = False
         return _poll_dict(poll, lecturer=True)
 
     @app.get("/api/rooms/{room_id}/polls")
-    async def list_polls(room_id: str, request: Request, student_id: str = ""):
-        room = _room(app, room_id)
-        viewer = student_id.strip()
-        if not _lecturer_ok(request):
-            session = _require_session(request, room, await request.body(), write=False)
-            if viewer and viewer != session.student_id:
-                raise StoreError("session_mismatch", 401)
-            viewer = session.student_id
-        lecturer = _lecturer_ok(request)
-        return {
-            "polls": [
-                _poll_dict(poll, lecturer=lecturer, student_id=viewer)
-                for poll in room.polls
-            ]
-        }
+    async def list_polls(room_id: str, request: Request):
+        room = room_of(room_id)
+        claim = claim_for(room, _require_session(request, room, await request.body(), write=False))
+        return {"polls": [_poll_dict(p, lecturer=False, student_id=claim.id) for p in room.polls]}
 
     @app.post("/api/rooms/{room_id}/polls/{poll_id}/answers")
     async def answer_poll(room_id: str, poll_id: str, request: Request):
         raw = await request.body()
-        room = _room(app, room_id)
-        session = _require_session(request, room, raw, write=True)
-        body = _body_dict(raw)
-        _match_student(session, body.get("student_id"))
-        poll = app.state.store.answer_poll(
-            room_id,
-            poll_id,
-            session.student_id,
-            str(body.get("option") or ""),
-            str(body.get("seat_zone") or ""),
-        )
-        return {
-            "ok": True,
-            "voted_option": str(body.get("option") or ""),
-            "counts": _option_counts(poll),
-        }
+        room = open_room(room_id)
+        claim = active_claim(request, room, raw, write=True)
+        option = str(_body_dict(raw).get("option") or "")
+        zone = "remote" if claim.state == REMOTE else claim.zone
+        poll = app.state.store.answer_poll(room, poll_id, claim.id, option, zone)
+        return {"ok": True, "voted_option": option, "counts": _option_counts(poll)}
 
     @app.post("/api/rooms/{room_id}/comments")
     async def add_comment(room_id: str, request: Request):
-        body = await _json(request)
-        _open_room(app, room_id)
-        comment = app.state.store.add_comment(
-            room_id,
-            str(body.get("student_id") or ""),
-            str(body.get("student_name") or ""),
-            str(body.get("text") or ""),
-        )
+        raw = await request.body()
+        room = open_room(room_id)
+        claim = active_claim(request, room, raw, write=True)
+        comment = app.state.store.add_comment(room, claim.id, str(_body_dict(raw).get("text") or ""))
         return {"id": comment.id}
 
-    @app.get("/api/rooms/{room_id}/comments")
-    def list_comments(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
+    @app.get("/api/rooms/{room_id}/questions")
+    async def list_questions(room_id: str, request: Request):
+        room = room_of(room_id)
+        claim = claim_for(room, _require_session(request, room, await request.body(), write=False))
         return {
-            "comments": [
-                {
-                    "id": comment.id,
-                    "student_id": comment.student_id,
-                    "name": room.names.get(comment.student_id, ""),
-                    "text": comment.text,
-                    "at": comment.at,
-                }
-                for comment in room.comments
+            "questions": [
+                {"id": q.id, "text": q.text, "votes": len(q.upvotes), "upvoted": claim.id in q.upvotes}
+                for q in app.state.store.questions_by_votes(room)
             ]
         }
 
     @app.post("/api/rooms/{room_id}/questions")
     async def add_question(room_id: str, request: Request):
         raw = await request.body()
-        room = _room(app, room_id)
-        session = _require_session(request, room, raw, write=True)
-        body = _body_dict(raw)
-        _match_student(session, body.get("student_id"))
-        question = app.state.store.add_question(
-            room_id,
-            session.student_id,
-            str(body.get("text") or ""),
-        )
+        room = open_room(room_id)
+        claim = active_claim(request, room, raw, write=True)
+        question = app.state.store.add_question(room, claim.id, str(_body_dict(raw).get("text") or ""))
         return {"id": question.id}
 
-    @app.get("/api/rooms/{room_id}/questions")
-    async def list_questions(room_id: str, request: Request, student_id: str = ""):
-        room = _room(app, room_id)
-        viewer = student_id.strip()
-        if not _lecturer_ok(request):
-            session = _require_session(request, room, await request.body(), write=False)
-            if viewer and viewer != session.student_id:
-                raise StoreError("session_mismatch", 401)
-            viewer = session.student_id
-        return {
-            "questions": [
-                _question_dict(question, viewer)
-                for question in app.state.store.questions_by_votes(room_id)
-            ]
-        }
-
     @app.post("/api/rooms/{room_id}/questions/{question_id}/upvote")
-    async def upvote_question(room_id: str, question_id: str, request: Request):
+    async def upvote(room_id: str, question_id: str, request: Request):
         raw = await request.body()
-        room = _room(app, room_id)
-        session = _require_session(request, room, raw, write=True)
-        body = _body_dict(raw)
-        _match_student(session, body.get("student_id"))
-        question = app.state.store.upvote_question(room_id, question_id, session.student_id)
+        room = open_room(room_id)
+        claim = active_claim(request, room, raw, write=True)
+        question = app.state.store.upvote_question(room, question_id, claim.id)
         return {"id": question.id, "votes": len(question.upvotes), "upvoted": True}
+
+    # ----- homework files ---------------------------------------------------------
+    @app.post("/api/rooms/{room_id}/homework")
+    async def upload_homework(room_id: str, request: Request):
+        lecturer(request)
+        room = room_of(room_id)
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise StoreError("missing_file")
+        data = await upload.read()
+        item = app.state.store.add_homework(
+            room, str(form.get("title") or ""), upload.filename or "", upload.content_type or "", data
+        )
+        return _homework_dict(item)
+
+    @app.get("/api/rooms/{room_id}/homework")
+    async def list_homework(room_id: str, request: Request):
+        room = room_of(room_id)
+        if not is_lecturer(request):
+            _viewer(request, room, await request.body())
+        return {"homework": [_homework_dict(h) for h in room.homework]}
+
+    @app.get("/api/rooms/{room_id}/homework/{homework_id}")
+    async def download_homework(room_id: str, homework_id: str, request: Request):
+        room = room_of(room_id)
+        if not is_lecturer(request):
+            _viewer(request, room, await request.body())
+        item = next((h for h in room.homework if h.id == homework_id), None)
+        if item is None:
+            raise StoreError("unknown_homework", 404)
+        return Response(
+            item.data,
+            media_type="application/octet-stream",
+            headers={
+                "content-disposition": "attachment; filename*=UTF-8''" + _quote(item.filename),
+                "x-content-type-options": "nosniff",
+            },
+        )
+
+    # ----- lesson summary -----------------------------------------------------------
+    @app.post("/api/rooms/{room_id}/transcript")
+    async def upload_transcript(room_id: str, request: Request):
+        lecturer(request)
+        room = room_of(room_id)
+        room.transcript = (await _upload_text(request, "transcript"))[:200000]
+        return {"characters": len(room.transcript)}
+
+    @app.post("/api/rooms/{room_id}/summary")
+    async def publish_summary(room_id: str, request: Request):
+        lecturer(request)
+        room = room_of(room_id)
+        text = str((await _json(request)).get("text") or "").strip()[:20000]
+        if not text:
+            raise StoreError("missing_summary")
+        room.summary, room.summary_source = text, "lecturer"
+        return {"published": True, "text": text}
 
     @app.get("/api/rooms/{room_id}/summary")
     async def read_summary(room_id: str, request: Request):
-        room = _room(app, room_id)
-        if not _lecturer_ok(request):
-            _require_session(request, room, await request.body(), write=False)
-        # Students see the text only after the room is closed and the lecturer published it.
-        visible = room.summary_published if room.closed and room.summary_published else ""
-        payload = {
-            "closed": bool(room.closed),
-            "published": bool(room.summary_published),
-            "text": visible,
-        }
-        if _lecturer_ok(request):
-            payload["draft"] = room.summary_draft
-        return payload
+        room = room_of(room_id)
+        if not is_lecturer(request):
+            _viewer(request, room, await request.body())
+        return {"text": room.summary, "source": room.summary_source}
 
-    @app.post("/api/rooms/{room_id}/summary")
-    async def save_summary(room_id: str, request: Request):
-        _require_lecturer(request)
-        body = await _json(request)
-        draft = app.state.store.save_summary_draft(room_id, str(body.get("text") or ""))
-        room = _room(app, room_id)
-        return {"draft": draft, "published": bool(room.summary_published)}
-
-    @app.post("/api/rooms/{room_id}/summary/publish")
-    async def publish_summary(room_id: str, request: Request):
-        _require_lecturer(request)
-        body = await _json(request)
-        published = app.state.store.publish_summary(room_id, body.get("text") if "text" in body else None)
-        return {"published": True, "text": published}
-
-    @app.post("/api/rooms/{room_id}/homework")
-    async def add_homework(room_id: str, request: Request):
-        body = await _json(request)
-        _open_room(app, room_id)
-        item = app.state.store.add_homework(
-            room_id,
-            str(body.get("student_id") or ""),
-            str(body.get("student_name") or ""),
-            str(body.get("text") or ""),
-        )
-        return {"id": item.id}
-
-    @app.get("/api/rooms/{room_id}/homework")
-    def list_homework(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        return {
-            "submissions": [
-                {
-                    "id": item.id,
-                    "student_id": item.student_id,
-                    "name": room.names.get(item.student_id, ""),
-                    "characters": len(item.text),
-                    "at": item.at,
-                }
-                for item in room.homework
-            ]
-        }
-
-    @app.post("/api/rooms/{room_id}/transcript")
-    async def upload_transcript(room_id: str, request: Request):
-        _require_lecturer(request)
-        text = await _transcript_text(request)
-        count = app.state.store.set_transcript(room_id, text)
-        return {"characters": count}
-
-    @app.post("/api/rooms/{room_id}/agent/summary")
-    async def agent_summary(room_id: str, request: Request):
-        _require_lecturer(request)
-        _require_llm(app)
-        store = app.state.store
-        snapshot, names, student_ids = store.snapshot(room_id)
-        service = SummaryService(_client_factory(app), settings.agent_max_steps)
-        try:
-            return service.summarize(snapshot, names, student_ids)
-        except (AgentError, ProviderFailure) as exc:
-            raise StoreError(getattr(exc, "message", str(exc)), 502) from exc
-
-    @app.post("/api/rooms/{room_id}/agent/homework")
-    async def agent_homework(room_id: str, request: Request):
-        body = await _json(request)
-        audience = str(body.get("audience") or "")
-        if audience == "lecturer":
-            _require_lecturer(request)
-        elif audience != "student":
-            raise StoreError("audience must be student or lecturer.", 400)
-        _require_llm(app)
-        submission_id = str(body.get("submission_id") or "")
-        room = _open_room(app, room_id) if audience == "student" else _room(app, room_id)
-        if not any(item.id == submission_id for item in room.homework):
-            raise StoreError("unknown_submission", 404)
-        snapshot, names, student_ids = app.state.store.snapshot(room_id)
-        service = HomeworkReviewService(_client_factory(app), settings.agent_max_steps)
-        try:
-            return service.review(snapshot, submission_id, audience, names, student_ids)
-        except (AgentError, ProviderFailure) as exc:
-            raise StoreError(getattr(exc, "message", str(exc)), 502) from exc
-
-    @app.post("/api/rooms/{room_id}/attention/samples")
-    async def attention_samples(room_id: str, request: Request):
-        _require_lecturer(request)
-        body = await _json(request)
-        room = _room(app, room_id)
-        samples = body.get("samples") or []
-        if not isinstance(samples, list) or not samples:
-            raise StoreError("samples_required", 400)
-        try:
-            for sample in samples:
-                room.attention.add_sample(
-                    float(sample["t_seconds"]),
-                    str(sample["zone"]),
-                    float(sample["level"]),
-                    str(sample.get("source") or ""),
-                )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise StoreError(str(exc), 400) from exc
-        return room.attention.by_zone()
-
-    @app.get("/api/rooms/{room_id}/attention")
-    def attention(room_id: str, request: Request):
-        _require_lecturer(request)
-        room = _room(app, room_id)
-        view = room.attention.by_zone()
-        view.pop("samples", None)
-        return view
-
-    @app.get("/api/llm/config")
-    def llm_config(request: Request):
-        _require_lecturer(request)
-        return _public_llm(app.state.store.llm)
-
-    @app.post("/api/llm/config")
-    async def save_llm_config(request: Request):
-        _require_lecturer(request)
-        body = await _json(request)
-        current = app.state.store.llm
-        provider = str(body.get("provider") if body.get("provider") is not None else current.provider)
-        model = str(body.get("model") if body.get("model") is not None else current.model)
-        base_url = str(body.get("base_url") if body.get("base_url") is not None else current.base_url)
-        api_key = current.api_key
-        if body.get("clear_key"):
-            api_key = ""
-        elif str(body.get("api_key") or "").strip():
-            api_key = str(body.get("api_key")).strip()
-        timeout = current.timeout_seconds
-        if body.get("timeout_seconds") is not None:
-            try:
-                timeout = float(body["timeout_seconds"])
-            except (TypeError, ValueError):
-                raise StoreError("bad_timeout", 400)
-        app.state.store.llm = LLMConfig(
-            provider=provider.strip(),
-            model=model.strip(),
-            base_url=base_url.strip(),
-            api_key=api_key,
-            timeout_seconds=timeout,
-        )
-        return _public_llm(app.state.store.llm)
-
-    @app.post("/api/llm/test")
-    async def llm_test(request: Request):
-        _require_lecturer(request)
-        body = await _json(request)
-        saved = app.state.store.llm
-        provider_name = str(body.get("provider") or saved.provider).strip().lower()
-        model_name = str(body.get("model") or saved.model).strip()
-        api_key = str(body.get("api_key") or "").strip() or saved.api_key
-        if provider_name in KNOWN_PROVIDERS and provider_name not in KEY_OPTIONAL and not api_key:
-            return ConnectResult(
-                status="error",
-                provider=provider_name,
-                model=model_name,
-                latency_ms=None,
-                tool_calling="not_checked",
-                category="missing_key",
-                message=MISSING_KEY_MESSAGE,
-            ).as_dict()
+    @app.post("/api/rooms/{room_id}/summary/generate")
+    async def generate_summary(room_id: str, request: Request):
+        raw = await request.body()
+        room = room_of(room_id)
+        by_lecturer = is_lecturer(request)
+        if not by_lecturer:
+            _viewer(request, room, raw)
+        body = _body_dict(raw)
+        api_key = str(body.get("api_key") or "").strip()
         config = LLMConfig(
-            provider=str(body.get("provider") or saved.provider),
-            model=str(body.get("model") or saved.model),
-            base_url=str(body.get("base_url") if body.get("base_url") is not None else saved.base_url),
+            provider=str(body.get("provider") or "openai").strip().lower(),
+            model=str(body.get("model") or "").strip(),
+            base_url=str(body.get("base_url") or "").strip(),
             api_key=api_key,
-            timeout_seconds=saved.timeout_seconds,
+            timeout_seconds=settings.llm_timeout_seconds,
         )
+        del body, raw
+        if config.provider not in KNOWN_PROVIDERS:
+            raise StoreError("unknown_provider", 400)
+        if not config.model:
+            raise StoreError("missing_model", 400)
+        if config.provider not in KEY_OPTIONAL and not api_key:
+            raise StoreError("missing_key", 400)
+        snapshot, names, ids = app.state.store.snapshot(room)
+        provider = (app.state.provider_factory or (lambda c: build_provider(c, app.state.http_transport)))(config)
+        service = SummaryService(lambda: LLMClient(provider), settings.agent_max_steps)
         try:
-            client = LLMClient(_make_provider(app, config))
-            result = client.test_connection()
-        except ProviderFailure as exc:
-            result = ConnectResult(
-                status="error",
-                provider=config.provider.strip().lower(),
-                model=config.model.strip(),
-                latency_ms=0,
-                tool_calling="not_checked",
-                category=exc.category,
-                message=exc.message,
-            )
-        payload = result.as_dict()
-        if api_key and api_key in str(payload):
-            # Belt and braces: never echo a key even if a provider message slipped.
-            payload["message"] = str(payload["message"]).replace(api_key, "[redacted]")
-        return payload
+            report = service.summarize(snapshot, names, ids)["report"]
+        except (AgentError, ProviderFailure) as exc:
+            message = str(getattr(exc, "message", "") or "model_failed")
+            if api_key:
+                message = message.replace(api_key, "[redacted]")
+            raise StoreError(message, 502) from None
+        finally:
+            config.api_key = ""
+            del provider, config, api_key
+        text = _summary_text(report)
+        if by_lecturer:
+            room.summary, room.summary_source = text, "model"
+        return {"text": text, "published": by_lecturer}
+
+    # ----- misc ---------------------------------------------------------------------
+    @app.get("/api/diagrams")
+    def diagrams():
+        if not DIAGRAM_DIR.is_dir():
+            return {"diagrams": []}
+        return {"diagrams": [{"file": p.name, "src": f"/diagrams/{p.name}"} for p in sorted(DIAGRAM_DIR.glob("*.svg"))]}
 
     @app.exception_handler(StoreError)
     async def store_error(_request: Request, exc: StoreError):
@@ -898,78 +510,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
+# ----- helpers ------------------------------------------------------------------
 def _announce(settings: Settings) -> None:
     if "pytest" in sys.modules or getattr(_announce, "done", False):
         return
     _announce.done = True
-    on_render = os.environ.get("RENDER", "").strip().lower() == "true"
-    if settings.generated_lecturer_token and not on_render:
-        print(f"Lecturer token for this run: {settings.lecturer_token}", flush=True)
+    if settings.lecturer_key_file:
+        verb = "Created" if settings.lecturer_key_created else "Using"
+        print(f"{verb} lecturer key file: {settings.lecturer_key_file} (the key itself is not printed)", flush=True)
     if settings.ephemeral_master_secret:
-        print(
-            "ZOOMODLE_MASTER_SECRET is unset. This process is using an ephemeral secret; "
-            "rooms will not verify after a restart.",
-            flush=True,
-        )
+        print("ZOOMODLE_MASTER_SECRET is unset; rooms will not survive a restart.", flush=True)
+    if not settings.smtp_configured:
+        print("SMTP is not configured: duplicate-name codes are shown on the lecturer dashboard (demo mode).", flush=True)
 
 
-def _lecturer_ok(request: Request) -> bool:
-    provided = request.headers.get("x-lecturer-token", "")
-    expected = request.app.state.settings.lecturer_token
-    if len(provided) != len(expected):
-        return False
-    return hmac.compare_digest(provided, expected)
-
-
-def _require_lecturer(request: Request) -> None:
-    if not _lecturer_ok(request):
-        raise StoreError("Lecturer token was rejected.", 401)
-
-
-def _room(app: FastAPI, room_id: str):
-    return app.state.store.get(room_id)
-
-
-def _open_room(app: FastAPI, room_id: str):
-    room = _room(app, room_id)
-    if room.closed:
-        raise StoreError("room_closed", 409)
-    return room
-
-
-def _fingerprint(raw: bytes) -> str:
-    return hashlib.sha256(raw).hexdigest()[:12]
-
-
-def _attendance_counts(room) -> dict:
-    records = room.attendance.records
+def _profile(settings: Settings) -> dict:
     return {
-        "in_class": sum(1 for record in records if record.mode == "in_class"),
-        "remote": sum(1 for record in records if record.mode == "remote"),
-        "flagged": sum(1 for record in records if record.flags),
+        "greeting": settings.greeting,
+        "lecturer_name": settings.lecturer_name,
+        "course": settings.course_name,
+        "week": settings.course_week,
     }
-
-
-def _diagram_entries() -> list[dict]:
-    if not DIAGRAM_DIR.is_dir():
-        return []
-    entries = []
-    for path in sorted(DIAGRAM_DIR.glob("*.svg")):
-        title = DIAGRAM_TITLES.get(path.stem) or path.stem.replace("-", " ").capitalize()
-        entries.append({"file": path.name, "title": title, "src": f"/diagrams/{path.name}"})
-    return entries
 
 
 _ORIGIN = re.compile(r"^https?://[A-Za-z0-9._:-]+(?::\d+)?$")
 
 
 def _public_origin(request: Request) -> str:
-    """Origin the lecturer should hand to phones.
-
-    An explicit public URL wins, then Render's RENDER_EXTERNAL_URL.
-    Otherwise keep the request host and take https from X-Forwarded-Proto.
-    That header is not used to decide the client IP.
-    """
     for name in ("ZOOMODLE_PUBLIC_ORIGIN", "ZOOMODLE_PUBLIC_BASE_URL", "RENDER_EXTERNAL_URL"):
         raw = os.environ.get(name, "").strip().rstrip("/")
         if _ORIGIN.match(raw):
@@ -986,55 +553,139 @@ def _room_link(request: Request, room) -> dict:
     return {
         "id": room.id,
         "title": room.title,
-        "closed": bool(room.closed),
-        "audio_band": room.audio_band,
-        "proof": room.proof,
+        "closed": room.closed,
         "student_path": path,
         "student_url": _public_origin(request) + path,
     }
 
 
-def _llm_ready(config: LLMConfig) -> bool:
-    name = config.provider.strip().lower()
-    if name not in ("openai", "anthropic", "gemini", "xai", "ollama", "openai_compatible"):
-        return False
-    if not config.model.strip():
-        return False
-    if name == "openai_compatible" and not config.base_url.strip():
-        return False
-    if name not in ("ollama", "openai_compatible") and not config.api_key:
-        return False
-    return True
+def _name_of(room, claim_id: str) -> str:
+    claim = room.checkin.claims.get(claim_id)
+    entry = room.roster.entries.get(claim.entry_id) if claim else None
+    return entry.display if entry else ""
 
 
-def _require_llm(app: FastAPI) -> None:
-    if not _llm_ready(app.state.store.llm):
-        raise StoreError(NOT_CONFIGURED, 503)
-
-
-def _make_provider(app: FastAPI, config: LLMConfig):
-    factory = app.state.provider_factory
-    if factory is not None:
-        return factory(config)
-    return build_provider(config, app.state.http_transport)
-
-
-def _client_factory(app: FastAPI):
-    def factory():
-        return LLMClient(_make_provider(app, app.state.store.llm))
-
-    return factory
-
-
-def _public_llm(config: LLMConfig) -> dict:
-    return {
-        "provider": config.provider,
-        "model": config.model,
-        "base_url": config.base_url,
-        "timeout_seconds": config.timeout_seconds,
-        "key_configured": bool(config.api_key),
-        "ready": _llm_ready(config),
+def _me(room, claim) -> dict:
+    entry = room.roster.entries.get(claim.entry_id)
+    display = entry.display if entry else ""
+    view = {
+        "claim_id": claim.id,
+        "display": display,
+        "mode": claim.mode,
+        "state": claim.state,
+        "state_text": STATE_TEXT.get(claim.state, claim.state),
+        "zone": claim.zone,
+        "checked": claim.state in (PRESENT, REMOTE),
     }
+    if claim.state in (PRESENT, REMOTE):
+        view["welcome"] = f"ברוך הבא {display}"
+    if claim.state == "email_code":
+        challenge = room.checkin.challenge_view(claim.entry_id)
+        view["email_sent"] = bool(challenge and challenge["sent"])
+    return view
+
+
+def _students(room) -> list[dict]:
+    rows = []
+    for claim in sorted(room.checkin.claims.values(), key=lambda c: c.at):
+        rows.append(
+            {
+                "claim_id": claim.id,
+                "name": _name_of(room, claim.id),
+                "mode": "בכיתה" if claim.mode == "in_class" else "מרחוק",
+                "state": claim.state,
+                "state_text": STATE_TEXT.get(claim.state, claim.state),
+                "zone": claim.zone,
+                "checked": claim.state in (PRESENT, REMOTE),
+                "at": claim.at,
+            }
+        )
+    return rows
+
+
+def _conflicts(room) -> list[dict]:
+    groups: dict[str, list] = {}
+    for claim in room.checkin.claims.values():
+        if claim.state in CONFLICT_STATES:
+            groups.setdefault(claim.entry_id, [])
+    out = []
+    for entry_id in groups:
+        entry = room.roster.entries.get(entry_id)
+        claims = [c for c in room.checkin.claims.values() if c.entry_id == entry_id and c.state != REJECTED]
+        out.append(
+            {
+                "name": entry.display if entry else "",
+                "claims": [
+                    {
+                        "claim_id": c.id,
+                        "mode": c.mode,
+                        "state": c.state,
+                        "state_text": STATE_TEXT.get(c.state, c.state),
+                        "zone": c.zone,
+                        "note": c.note,
+                    }
+                    for c in claims
+                ],
+                "email": room.checkin.challenge_view(entry_id),
+            }
+        )
+    return out
+
+
+def _option_counts(poll) -> dict:
+    counts = {option: 0 for option in poll.options}
+    for answer in poll.answers:
+        counts[answer["option"]] = counts.get(answer["option"], 0) + 1
+    return counts
+
+
+def _poll_dict(poll, lecturer: bool, student_id: str = "") -> dict:
+    voted = next((a for a in poll.answers if student_id and a["student_id"] == student_id), None)
+    payload = {
+        "id": poll.id,
+        "question": poll.question,
+        "options": list(poll.options),
+        "open": poll.open,
+        "answer_count": len(poll.answers),
+    }
+    if lecturer or voted is not None or not poll.open:
+        payload["counts"] = _option_counts(poll)
+    if voted is not None:
+        payload["voted_option"] = voted["option"]
+    if lecturer:
+        payload["correct_option"] = poll.correct_option
+    return payload
+
+
+def _homework_dict(item) -> dict:
+    return {"id": item.id, "title": item.title, "filename": item.filename, "size": len(item.data), "at": item.at}
+
+
+def _summary_text(report: dict) -> str:
+    lines: list[str] = []
+
+    def section(title: str, items) -> None:
+        items = [i for i in (items or []) if i]
+        if not items:
+            return
+        if lines:
+            lines.append("")
+        lines.append(title)
+        for item in items:
+            if isinstance(item, dict):
+                item = item.get("title") or item.get("text") or item.get("finding") or json.dumps(item, ensure_ascii=False)
+            lines.append("- " + str(item))
+
+    section("נושאים", report.get("topics"))
+    section("ממצאים", report.get("zone_findings"))
+    section("המלצות לשיעור הבא", report.get("recommendations"))
+    return "\n".join(lines) or json.dumps(report, ensure_ascii=False, indent=2)
+
+
+def _quote(name: str) -> str:
+    from urllib.parse import quote
+
+    return quote(name, safe="")
 
 
 async def _json(request: Request) -> dict:
@@ -1047,85 +698,20 @@ async def _json(request: Request) -> dict:
     return body
 
 
-async def _roster_text(request: Request) -> str:
-    content_type = request.headers.get("content-type", "")
-    if "multipart/form-data" in content_type:
+async def _upload_text(request: Request, field: str) -> str:
+    if "multipart/form-data" in request.headers.get("content-type", ""):
         form = await request.form()
         upload = form.get("file")
         if upload is not None and hasattr(upload, "read"):
-            raw = await upload.read()
-            return raw.decode("utf-8-sig")
-        return str(form.get("text") or "")
-    body = await _json(request)
-    return str(body.get("text") or "")
-
-
-async def _transcript_text(request: Request) -> str:
-    content_type = request.headers.get("content-type", "")
-    if "multipart/form-data" in content_type:
-        form = await request.form()
-        upload = form.get("file")
-        if upload is not None and hasattr(upload, "read"):
-            raw = await upload.read()
-            return raw.decode("utf-8", errors="replace")
-        return str(form.get("transcript") or "")
-    body = await _json(request)
-    return str(body.get("transcript") or "")
-
-
-def _decode_signature(text: str) -> bytes:
-    raw = "".join(text.split())
-    pad = "=" * ((4 - len(raw) % 4) % 4)
-    try:
-        return base64.b64decode(raw + pad)
-    except Exception:
-        return base64.urlsafe_b64decode(raw + pad)
-
-
-def _record_dict(record, room) -> dict:
-    identity = record.attendance_id or record.student_id
-    return {
-        "student_id": record.student_id,
-        "name": record.student_name,
-        "device_id": record.device_id,
-        "mode": record.mode,
-        "seat_zone": record.seat_zone,
-        "at": record.at,
-        "confidence": record.confidence,
-        "flags": list(record.flags),
-        "subnet": record.subnet,
-        "attendance_id": record.attendance_id,
-        "external_token": record.external_token or "",
-        "verified": bool(room.sessions.is_verified(identity)),
-    }
-
-
-def _zone_counts(room) -> dict:
-    counts = {zone: 0 for zone in SEAT_ZONES}
-    for record in room.attendance.records:
-        if record.mode == "in_class" and record.seat_zone in counts:
-            counts[record.seat_zone] += 1
-    return counts
-
-
-def _issue_session(room, student_id: str) -> dict:
-    session_id, session_key = room.sessions.issue(student_id)
-    return {"session_id": session_id, "session_key": session_key}
-
-
-def _signed_target(request: Request) -> str:
-    path = request.url.path
-    query = request.scope.get("query_string", b"").decode("ascii", errors="replace")
-    if query:
-        return path + "?" + query
-    return path
+            return (await upload.read()).decode("utf-8-sig", errors="replace")
+        return str(form.get(field) or "")
+    return str((await _json(request)).get(field) or "")
 
 
 def _body_dict(raw: bytes) -> dict:
     if not raw:
         return {}
     try:
-        import json
         body = json.loads(raw)
     except Exception as exc:
         raise StoreError("expected_json", 400) from exc
@@ -1134,20 +720,14 @@ def _body_dict(raw: bytes) -> dict:
     return body
 
 
-def _match_student(session, presented) -> None:
-    if presented is None:
-        return
-    if str(presented).strip() != session.student_id:
-        raise StoreError("session_mismatch", 401)
+def _signed_target(request: Request) -> str:
+    query = request.scope.get("query_string", b"").decode("ascii", errors="replace")
+    return request.url.path + ("?" + query if query else "")
 
 
 def _require_session(request: Request, room, raw: bytes, *, write: bool):
-    """Reads stay signed after close so the phone can load the published summary.
-
-    Writes are rejected once ``close_room`` has revoked the session.
-    """
     try:
-        session = room.sessions.verify(
+        return room.sessions.verify(
             session_id=request.headers.get("x-zoomoodle-session", ""),
             timestamp=request.headers.get("x-zoomoodle-timestamp", ""),
             nonce=request.headers.get("x-zoomoodle-nonce", ""),
@@ -1163,48 +743,14 @@ def _require_session(request: Request, room, raw: bytes, *, write: bool):
         )
     except SessionError as exc:
         raise StoreError(exc.reason, 401) from exc
-    return session
 
 
-def _option_counts(poll) -> dict[str, int]:
-    counts = {option: 0 for option in poll.options}
-    for answer in poll.answers:
-        if answer["option"] in counts:
-            counts[answer["option"]] += 1
-    return counts
-
-
-def _poll_dict(poll, lecturer: bool, student_id: str = "") -> dict:
-    by_zone: dict[str, dict[str, int]] = {}
-    voted = None
-    for answer in poll.answers:
-        zone = by_zone.setdefault(answer["seat_zone"], {})
-        zone[answer["option"]] = zone.get(answer["option"], 0) + 1
-        if student_id and answer["student_id"] == student_id:
-            voted = answer
-    payload = {
-        "id": poll.id,
-        "question": poll.question,
-        "options": list(poll.options),
-        "answer_count": len(poll.answers),
-    }
-    if lecturer or voted is not None:
-        payload["counts"] = _option_counts(poll)
-    if voted is not None:
-        payload["voted_option"] = voted["option"]
-    if lecturer:
-        payload["correct_option"] = poll.correct_option
-        payload["by_zone"] = by_zone
-    return payload
-
-
-def _question_dict(question, viewer: str) -> dict:
-    return {
-        "id": question.id,
-        "text": question.text,
-        "votes": len(question.upvotes),
-        "upvoted": bool(viewer) and viewer in question.upvotes,
-    }
+def _viewer(request: Request, room, raw: bytes):
+    session = _require_session(request, room, raw, write=False)
+    claim = room.checkin.claims.get(session.student_id)
+    if claim is None or claim.state == REJECTED:
+        raise StoreError("not_checked_in", 403)
+    return claim
 
 
 app = create_app()

@@ -1,4 +1,4 @@
-"""Process settings. API keys stay in memory and are never logged."""
+"""Process settings. Secrets stay in memory and are never logged."""
 
 from __future__ import annotations
 
@@ -7,6 +7,10 @@ import secrets
 from dataclasses import dataclass
 
 from app.net import DEFAULT_TRUSTED_PROXIES
+
+# Ariel University public egress (RIPE inetnum 192.114.48.0 - 192.114.57.255).
+DEFAULT_CAMPUS_RANGES = ("192.114.48.0/21", "192.114.56.0/23")
+DEFAULT_KEY_FILE = os.path.join("~", ".zoomoodle", "lecturer-key.txt")
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -29,44 +33,86 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _on_render() -> bool:
+    return os.environ.get("RENDER", "").strip().lower() == "true"
+
+
+def _list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _int(name: str, default: int) -> int:
+    try:
+        return int(_env(name, str(default)) or default)
+    except ValueError:
+        return default
+
+
+def read_or_create_key_file(path: str) -> tuple[str, bool]:
+    """Return ``(key, created)``. A new key file is written with mode 600."""
+    full = os.path.expanduser(path)
+    if os.path.exists(full):
+        with open(full, encoding="utf-8") as handle:
+            key = handle.read().strip()
+        if key:
+            return key, False
+    os.makedirs(os.path.dirname(full), mode=0o700, exist_ok=True)
+    key = "zmk_" + secrets.token_urlsafe(32)
+    fd = os.open(full, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(key + "\n")
+    os.chmod(full, 0o600)
+    return key, True
+
+
 def _refuse_render_without_secrets() -> None:
-    """Render must get both secrets from the dashboard, not from a log line."""
-    if os.environ.get("RENDER", "").strip().lower() != "true":
+    if not _on_render():
         return
-    missing = [
-        name
-        for name in ("ZOOMODLE_MASTER_SECRET", "ZOOMODLE_LECTURER_TOKEN")
-        if not os.environ.get(name, "").strip()
-    ]
-    if not missing:
-        return
-    listed = " and ".join(missing)
-    raise SystemExit(
-        f"Cannot start on Render: {listed} is empty. "
-        "In the Render Dashboard open this service, then Environment, and set a value. "
-        "Reveal ZOOMODLE_LECTURER_TOKEN there. Startup does not print that token."
-    )
+    missing = []
+    if not _env("ZOOMODLE_MASTER_SECRET"):
+        missing.append("ZOOMODLE_MASTER_SECRET")
+    if not (_env("ZOOMODLE_LECTURER_KEY") or _env("ZOOMODLE_LECTURER_TOKEN")):
+        missing.append("ZOOMODLE_LECTURER_KEY")
+    if missing:
+        raise SystemExit(
+            "Cannot start on Render: " + " and ".join(missing) + " is empty. "
+            "Set it under Environment in the Render Dashboard. Startup never prints it."
+        )
 
 
 @dataclass
 class Settings:
     master_secret: bytes
-    lecturer_token: str
+    lecturer_key: str
     ephemeral_master_secret: bool = False
-    generated_lecturer_token: bool = False
-    token_window_seconds: int = 5
-    grace_windows: int = 1
-    challenge_max_age_seconds: float = 8.0
-    allowed_subnets: tuple[str, ...] = ()
+    lecturer_key_file: str = ""
+    lecturer_key_created: bool = False
+    lecturer_name: str = "טום יניב"
+    course_name: str = "מערכות נוירונים"
+    course_week: int = 4
+    campus_ranges: tuple[str, ...] = DEFAULT_CAMPUS_RANGES
     trusted_proxies: tuple[str, ...] = DEFAULT_TRUSTED_PROXIES
-    llm_provider: str = ""
-    llm_model: str = ""
-    llm_base_url: str = ""
-    llm_api_key: str = ""
-    llm_timeout_seconds: float = 8.0
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    demo_email_override: str = ""
+    llm_timeout_seconds: float = 20.0
     agent_max_steps: int = 8
     host: str = "0.0.0.0"
     port: int = 8000
+
+    @property
+    def greeting(self) -> str:
+        return f"שלום {self.lecturer_name}, השבוע שבוע {self.course_week} בקורס {self.course_name}"
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from)
 
     @staticmethod
     def from_env() -> "Settings":
@@ -76,48 +122,36 @@ class Settings:
         ephemeral = not secret_text
         if ephemeral:
             secret_text = secrets.token_hex(32)
-        token = _env("ZOOMODLE_LECTURER_TOKEN")
-        generated_token = not token
-        if generated_token:
-            token = secrets.token_urlsafe(18)
-        subnets = tuple(
-            part.strip() for part in _env("ZOOMODLE_ALLOWED_SUBNETS").split(",") if part.strip()
-        )
-        proxy_text = os.environ.get("ZOOMODLE_TRUSTED_PROXIES")
-        if proxy_text is None or not proxy_text.strip():
-            proxies = DEFAULT_TRUSTED_PROXIES
-        else:
-            proxies = tuple(part.strip() for part in proxy_text.split(",") if part.strip())
+        key = _env("ZOOMODLE_LECTURER_KEY") or _env("ZOOMODLE_LECTURER_TOKEN")
+        key_file = ""
+        created = False
+        if not key:
+            key_file = os.path.expanduser(_env("ZOOMODLE_LECTURER_KEY_FILE") or DEFAULT_KEY_FILE)
+            key, created = read_or_create_key_file(key_file)
         try:
-            window = int(_env("ZOOMODLE_TOKEN_WINDOW_SECONDS", "5") or "5")
+            timeout = float(_env("LLM_TIMEOUT_SECONDS", "20") or "20")
         except ValueError:
-            window = 5
-        try:
-            steps = int(_env("ZOOMODLE_AGENT_MAX_STEPS", "8") or "8")
-        except ValueError:
-            steps = 8
-        try:
-            timeout = float(_env("LLM_TIMEOUT_SECONDS", "8") or "8")
-        except ValueError:
-            timeout = 8.0
-        try:
-            port = int(_env("ZOOMODLE_PORT", "8000") or "8000")
-        except ValueError:
-            port = 8000
+            timeout = 20.0
         return Settings(
             master_secret=secret_text.encode("utf-8"),
-            lecturer_token=token,
+            lecturer_key=key,
             ephemeral_master_secret=ephemeral,
-            generated_lecturer_token=generated_token,
-            token_window_seconds=max(1, window),
-            allowed_subnets=subnets,
-            trusted_proxies=proxies,
-            llm_provider=_env("LLM_PROVIDER"),
-            llm_model=_env("LLM_MODEL"),
-            llm_base_url=_env("LLM_BASE_URL"),
-            llm_api_key=_env("LLM_API_KEY"),
+            lecturer_key_file=key_file,
+            lecturer_key_created=created,
+            lecturer_name=_env("ZOOMODLE_LECTURER_NAME") or "טום יניב",
+            course_name=_env("ZOOMODLE_COURSE_NAME") or "מערכות נוירונים",
+            course_week=_int("ZOOMODLE_COURSE_WEEK", 4),
+            # An empty value (also the legacy ZOOMODLE_ALLOWED_SUBNETS="") means the default ranges.
+            campus_ranges=_list("ZOOMODLE_CAMPUS_RANGES", ()) or _list("ZOOMODLE_ALLOWED_SUBNETS", ()) or DEFAULT_CAMPUS_RANGES,
+            trusted_proxies=_list("ZOOMODLE_TRUSTED_PROXIES", DEFAULT_TRUSTED_PROXIES) or DEFAULT_TRUSTED_PROXIES,
+            smtp_host=_env("ZOOMODLE_SMTP_HOST"),
+            smtp_port=_int("ZOOMODLE_SMTP_PORT", 587),
+            smtp_user=_env("ZOOMODLE_SMTP_USER"),
+            smtp_password=_env("ZOOMODLE_SMTP_PASSWORD"),
+            smtp_from=_env("ZOOMODLE_SMTP_FROM") or _env("ZOOMODLE_SMTP_USER"),
+            demo_email_override=_env("DEMO_EMAIL_OVERRIDE"),
             llm_timeout_seconds=timeout,
-            agent_max_steps=max(1, steps),
+            agent_max_steps=max(1, _int("ZOOMODLE_AGENT_MAX_STEPS", 8)),
             host=_env("ZOOMODLE_HOST", "0.0.0.0") or "0.0.0.0",
-            port=port,
+            port=_int("ZOOMODLE_PORT", 8000),
         )

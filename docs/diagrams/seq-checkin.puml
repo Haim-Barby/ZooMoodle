@@ -4,29 +4,37 @@ title In-class check-in
 actor Student
 participant "Student page" as UI
 participant "HTTP API" as API
-participant RoomRoster as Roster
+participant "net.client_ip" as NET
+participant CheckinBook as CB
 participant ScreenQrService as QR
-participant "Local helper" as Helper
 actor Lecturer
 
-Student -> UI : pick name, confirm email
-UI -> API : identify
-API -> Roster : verify email HMAC
-Roster --> API : session, no checkmark
-API --> UI : session
-
-Student -> UI : hold camera 2s\non live barcode
-UI -> API : POST distinct frames
-API -> QR : liveness, freshness,\nsingle-use, room bind
-QR --> API : ok or qr_static / qr_short
-API --> UI : barcode accepted
-
-Student -> Helper : open /prove?c=...
-Helper -> Helper : bound address\nand peer in range
-Helper -> API : HMAC observe
-Helper --> UI : redirect
-
-UI -> API : finish
-API --> Student : checkmark and welcome
-API --> Lecturer : ✓ on roster
+Lecturer -> API : sign in with key, open lesson
+API --> Lecturer : greeting, join QR, live barcode
+Student -> UI : scan join QR, pick name, "בכיתה"
+UI -> API : POST /join {entry_id, mode}
+API -> NET : real client IP
+NET --> API : inside campus ranges?
+alt off campus
+  API --> UI : 403 not_on_campus_network
+else on campus
+  API -> CB : join -> pending_barcode
+  API --> UI : session key (once)
+end
+Student -> UI : hold camera 2 s on live barcode
+UI -> API : signed POST /barcode {codes}
+API -> NET : campus check again
+API -> CB : submit_barcode
+CB -> QR : verify_sequence\n(>=5 codes, 2 s, <=6 s old, room, order)
+QR --> CB : ok / qr_static / qr_short / qr_stale
+CB -> CB : single use + resolve duplicate name
+alt name conflict
+  CB --> UI : repick / email_code / lecturer_decision
+else free
+  API --> UI : needs_area
+  Student -> UI : pick area
+  UI -> API : signed POST /area
+  API --> UI : present, "ברוך הבא <name>"
+  API --> Lecturer : dashboard ✓, map
+end
 @enduml

@@ -1,81 +1,47 @@
-# Use cases and user stories
+# Use cases
 
-Actors: Lecturer and Student. UC-9/10 are carried out by the lesson agent. These are acceptance criteria, not a claim that every scenario has passed. Real-phone camera, hotspot, and live-model trials remain pending.
+Actors: Lecturer, Student, Mail server, LLM provider.
 
-## UC-1 Lecturer opens a room
+## UC-1 Lecturer signs in
+I enter my key and see "שלום טום יניב, השבוע שבוע 4 בקורס מערכות נוירונים".
+**Accept:** wrong key → 401, 10 failures → 429; the key is not echoed; lecturer routes need the session token.
 
-**Story.** As a lecturer, I unlock the page, enter a lesson title, and open a room so students share one lesson link.
-
-**Acceptance.** Missing or wrong lecturer token gives HTTP 401. The response includes `id`, `title`, and `student_path`, with no key, master secret, or salt. A shared phone link must use the HTTPS origin.
-
-## UC-2 Student checks in from the room
-
-**Story.** As a student, I pick my name from the imported list, confirm with that person's email, hold the camera on the lecturer's flickering barcode for about two seconds, and then join the lecturer's network so the local verifier can see my phone.
-
-**Acceptance.**
-
-- After a correct name and email confirmation, a valid two-second live capture (≥5 distinct frames), and a helper observation from a peer inside the configured range, the roster shows a checkmark and the phone shows `ברוך הבא` with that name.
-- A still photo or repeated frame gives `qr_static`. A capture shorter than two seconds gives `qr_short`. A stale frame (older than 6 seconds by the server clock), a replay, a wrong-room code, or a large gap stores no checkmark.
-- A claimed IP or Wi-Fi name, a forwarded header, or a socket peer outside the range is not enough. Network success without the live sequence is not enough, unless the lecturer turned the barcode off.
-- Repeated wrong email attempts lock out. The list does not expose national ids, raw emails, or the email hash.
-- Anonymous clients cannot fetch the current barcode token stream without the designed student session. Physical camera and hotspot behavior must be tested on iPhone/Android; the automated suite is insufficient.
+## UC-2 Lecturer opens a lesson
+I open a lesson, import the roster, and project the join QR and the live barcode.
+**Accept:** the roster shows names only; the barcode changes every 250 ms and shimmers.
 
 ## UC-3 Student joins remotely
+I scan the join QR, pick my name, choose מרחוק.
+**Accept:** ✓ remote and "ברוך הבא ‹name›"; no network or barcode needed.
 
-**Story.** As a remote student, I join remotely so my attendance stays separate.
+## UC-4 Student checks in from class
+I pick my name, choose בכיתה, hold my camera on the barcode for 2 s, then pick my area.
+**Accept:** refused off the campus network (`not_on_campus_network`); a screenshot → `qr_static`; too short → `qr_short`; stale, reused or other-room codes refused; a valid scan → area → ✓ and "ברוך הבא ‹name›"; forged forwarding headers do not help.
 
-**Acceptance.** No barcode or helper is required. Store `remote` with no roster checkmark. If the same person already appears in class, mark both-mode flags as in FR-9.
+## UC-5 Duplicate name
+Two phones claim one name.
+**Accept:** remote vs verified in class → remote flagged. Two in class → both see a re-pick popup. Same name again → an e-mailed code; the right code takes the name, the other goes to the lecturer. Wrong codes or expiry → the lecturer decides. Without SMTP the code appears only on the dashboard as "מצב הדגמה – המייל לא נשלח".
 
-## UC-4 Seat zone
-
-**Story.** As a student, I choose my position so poll results can be grouped.
-
-**Acceptance.** Six values: front/middle/back × left/right. A missing or invalid zone is rejected. The browser uses the selected zone for later answers.
-
-## UC-5 Lecturer reviews anomalies
-
-**Story.** As a lecturer, I inspect suspicious attendance instead of silently losing records.
-
-**Acceptance.** Show mode, confidence, flags, and whether the roster checkmark is present. Shared or multiple-device rows remain visible with low confidence.
-
-## UC-6 Export
-
-**Story.** As a lecturer, I download the lesson's attendance sheet.
-
-**Acceptance.** CSV/XLSX require the lecturer token. They include stored attendance fields and not a national id or the raw email. The export is not model input.
+## UC-6 Lecturer decides
+I see the conflict on the dashboard, ask in class, and press "זה הוא" or "דחה".
+**Accept:** the accepted claim gets the name; other claims for that name are rejected.
 
 ## UC-7 Poll
+I open a poll; students answer once from the phone.
+**Accept:** the dashboard shows live counts; students see counts after voting or when closed.
 
-**Story.** As a lecturer, I ask a short question; as a student, I choose one answer.
+## UC-8 Notes and questions
+Students send notes and questions and up-vote questions.
+**Accept:** the dashboard shows notes with names and questions sorted by votes; only checked-in students can post.
 
-**Acceptance.** Two to six options; an optional correct option must belong to the list. Students cannot read the correct option or per-option/zone counts. Lecturer results include both. A repeat answer from the same student gives `already_answered`.
+## UC-9 Homework
+I upload a file; students download it.
+**Accept:** lecturer-only upload, ≤5 MB; download requires a checked-in session and is served as an attachment.
 
-## UC-8 Comments
+## UC-10 Lesson summary (optional)
+I upload a transcript and either write a summary or give a provider, model and API key.
+**Accept:** the summary appears to all students of the room; a student may make a private one with their own key; keys are never stored, logged or returned.
 
-**Story.** As a student, I comment during or after the lesson; as a lecturer, I read it with its author.
-
-**Acceptance.** Lecturer output includes the name. Agent tools use a pseudonym and redact known names/ids. Sending requires a live room; disconnected synchronization is not implemented.
-
-## UC-9 Transcript and lesson summary
-
-**Story.** As a lecturer, I import a transcript and run the agent to connect topics with poll mistakes, comments, and zone aggregates. The agent calls a data tool before `produce_report`.
-
-**Acceptance.** Missing model configuration gives HTTP 503 and states that no model was called. A successful report has `kind: lesson_summary`, topics, recommendations, missing data, and citations, with names scrubbed. Hitting the step limit returns an error, not invented output. Live quality remains open.
-
-## UC-10 Homework review
-
-**Story.** As a student or lecturer, I request feedback on one submission with an anonymous comparison to peers.
-
-**Acceptance.** Lecturer lists include author identity; agent tools use pseudonyms. Reports require `not_a_grade: true`. Missing configuration behaves as in UC-9. Live quality remains open.
-
-## UC-11 Attention samples (extension)
-
-**Story.** As a lecturer, I inspect a zone-level indicator without tracking students.
-
-**Acceptance.** UI and tool output state that no camera is running. Reject samples unless `source=sample-not-camera`. A live MediaPipe pipeline is outside this demo.
-
-## UC-12 Model connection
-
-**Story.** As a lecturer, I choose provider, model, base URL, and key, Save settings, then Test connection. A test-only key is not saved.
-
-**Acceptance.** Lecturer token required. Success includes `status: ok`, latency, and `tool_calling`. Failures use the FR-18 categories and never echo the key. Automated mocks do not validate a real account.
+## UC-11 Export
+I download the attendance sheet.
+**Accept:** CSV/XLSX with name, mode, state, area, time; no email or id.

@@ -1,1181 +1,201 @@
-const tokenInput = document.querySelector("#token");
-const savedToken = sessionStorage.getItem("zoomoodle-lecturer-token") || "";
-if (savedToken) tokenInput.value = savedToken;
+/* ZooMoodle lecturer page. The lecturer key is sent once to sign in; only the session token is kept. */
+const ZONES = ["front-left", "front-center", "front-right", "middle-left", "middle-center", "middle-right", "back-left", "back-center", "back-right"];
+const ZONE_HE = { "front-left": "קדימה שמאל", "front-center": "קדימה מרכז", "front-right": "קדימה ימין", "middle-left": "אמצע שמאל", "middle-center": "אמצע מרכז", "middle-right": "אמצע ימין", "back-left": "אחורה שמאל", "back-center": "אחורה מרכז", "back-right": "אחורה ימין" };
+const state = { token: sessionStorage.getItem("zm-lecturer") || "", roomId: "", greeting: "", code: "", seed: "", hz: 20, raf: 0, tick: -1, timers: [] };
+const $ = (sel) => document.querySelector(sel);
 
-const state = {
-  roomId: null,
-  audio: null,
-  playing: false,
-  lastCode: "",
-  llmConfigLoaded: false,
-  llmKeyConfigured: false,
-  payloadHex: "",
-  source: null,
-  gain: null,
-  analyser: null,
-  raf: 0,
-  closed: false,
-  camera: null,
-  band: "ultrasonic",
-  proof: "both",
-  joinLink: "",
-};
-
-function authHeaders() {
-  return { "x-lecturer-token": tokenInput.value.trim() };
-}
+function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
 async function api(path, options = {}) {
-  const headers = Object.assign({ "content-type": "application/json" }, authHeaders(), options.headers || {});
-  if (options.body === undefined) delete headers["content-type"];
-  const response = await fetch(path, Object.assign({}, options, { headers }));
-  const text = await response.text();
-  let body = null;
-  if (text) {
-    try { body = JSON.parse(text); } catch (_err) { body = { error: text }; }
-  }
-  if (!response.ok) {
-    const message = body && body.error ? body.error : response.statusText;
-    throw new Error(message);
-  }
+  const headers = Object.assign({ "x-lecturer-session": state.token }, options.headers || {});
+  if (options.body && !(options.body instanceof FormData)) headers["content-type"] = "application/json";
+  const res = await fetch(path, Object.assign({}, options, { headers }));
+  if (res.status === 401 && path !== "/api/lecturer/login") { signOut(); throw new Error("צריך להיכנס שוב"); }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || ("HTTP " + res.status));
   return body;
 }
 
-function showApp() {
-  document.querySelector("#gate").hidden = true;
-  document.querySelector("#shell").hidden = false;
+function show(id) { ["login", "home", "room"].forEach((name) => { $("#" + name).hidden = name !== id; }); }
+
+function signOut() {
+  state.token = ""; sessionStorage.removeItem("zm-lecturer"); stopRoom(); show("login");
 }
 
-document.querySelector("#unlock-form").addEventListener("submit", (event) => event.preventDefault());
-document.querySelector("#save-token").addEventListener("click", async () => {
-  sessionStorage.setItem("zoomoodle-lecturer-token", tokenInput.value.trim());
-  const unlocked = await loadLlm();
-  document.querySelector("#token-state").textContent = unlocked
-    ? "Saved in this browser tab's session only."
-    : "Enter the lecturer token to load model settings.";
-  if (unlocked) {
-    showApp();
-    await restoreRoom();
+$("#login-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("#lecturer-key");
+  try {
+    const body = await api("/api/lecturer/login", { method: "POST", body: JSON.stringify({ key: input.value }) });
+    input.value = "";
+    state.token = body.token; sessionStorage.setItem("zm-lecturer", body.token);
+    enterHome(body.greeting);
+  } catch (err) {
+    $("#login-state").textContent = err.message === "bad_lecturer_key" ? "המפתח שגוי." : err.message === "login_limited" ? "יותר מדי ניסיונות. נסה שוב בעוד כמה דקות." : err.message;
   }
 });
 
-const ROOM_KEY = "zoomoodle-lecturer-room";
+$("#logout").addEventListener("click", async () => { await api("/api/lecturer/logout", { method: "POST" }).catch(() => {}); signOut(); });
 
-function showTab(name) {
-  document.querySelectorAll(".nav-item").forEach((button) => {
-    const on = button.dataset.tab === name;
-    button.classList.toggle("selected", on);
-    button.setAttribute("aria-selected", on ? "true" : "false");
-  });
-  document.querySelectorAll(".panel").forEach((panel) => {
-    panel.hidden = panel.dataset.panel !== name;
-  });
-  if (name === "architecture") loadDiagrams().catch(() => {});
+async function enterHome(greeting) {
+  state.greeting = greeting; $("#greeting").textContent = greeting; show("home");
+  const rooms = await api("/api/rooms").catch(() => ({ rooms: [] }));
+  $("#open-rooms").innerHTML = rooms.rooms.length
+    ? "שיעורים פתוחים: " + rooms.rooms.map((r) => `<button class="ghost" data-room="${esc(r.id)}" type="button">${esc(r.title)}</button>`).join(" ")
+    : "";
+  document.querySelectorAll("[data-room]").forEach((b) => b.addEventListener("click", () => enterRoom(b.dataset.room)));
 }
 
-document.querySelectorAll(".nav-item").forEach((button) => {
-  button.addEventListener("click", () => showTab(button.dataset.tab));
+$("#new-room").addEventListener("click", async () => {
+  const room = await api("/api/rooms", { method: "POST", body: JSON.stringify({ title: $("#room-title").value }) });
+  enterRoom(room.id);
 });
 
-document.querySelector("#theme").addEventListener("click", () => {
-  const root = document.documentElement;
-  const next = root.dataset.theme === "dark" ? "light" : "dark";
-  root.dataset.theme = next;
-  localStorage.setItem("zoomoodle-theme", next);
-});
-const savedTheme = localStorage.getItem("zoomoodle-theme");
-if (savedTheme) document.documentElement.dataset.theme = savedTheme;
-
-function showRoom(room) {
-  state.roomId = room.id;
-  state.closed = !!room.closed;
-  sessionStorage.setItem(ROOM_KEY, room.id);
-  const path = room.student_url || room.student_path || ("/student?room=" + room.id);
-  const link = new URL(path, window.location.origin).href;
-  document.querySelector("#room-info").innerHTML =
-    "Room <strong>" + room.id + "</strong>. Student link: <a href=\"" + link + "\">" + link + "</a>";
-  document.querySelector("#student-link").innerHTML = "<a href=\"" + link + "\">" + link + "</a>";
-  document.querySelector("#room-code").textContent = room.id;
-  document.querySelector("#lesson-title").textContent = room.title || "Lesson";
-  if (room.title) document.querySelector("#title").value = room.title;
-  state.band = room.audio_band || state.band;
-  state.proof = room.proof || state.proof;
-  state.joinLink = link;
-  updateBandNote();
-  const roomsBox = document.querySelector("#open-rooms");
-  if (roomsBox) roomsBox.textContent = "";
-  if (room.audio_band) document.querySelector("#audio-band").value = room.audio_band;
-  if (room.proof) document.querySelector("#proof").value = room.proof;
-  document.querySelector("#play").disabled = !!room.closed || state.proof === "qr";
-  document.querySelector("#close-room").disabled = !!room.closed;
-  const qr = document.querySelector("#qr");
-  const svg = window.ZooQR ? ZooQR.toSvg(link, 5) : "";
-  qr.innerHTML = svg;
-  qr.hidden = !svg;
-  document.querySelector("#live-pill").textContent = room.closed ? "Closed" : "Live";
-  loadSummaryEditor().catch(() => {});
-  loadNetwork().catch(() => {});
+async function enterRoom(roomId) {
+  state.roomId = roomId; location.hash = roomId; show("room");
+  $("#room-greeting").textContent = state.greeting;
+  await refreshDashboard();
+  state.timers.push(setInterval(refreshBarcode, 200));
+  state.timers.push(setInterval(() => refreshDashboard().catch(() => {}), 2000));
+  startFlicker();
 }
 
-async function loadNetwork() {
+function stopRoom() {
+  state.timers.forEach(clearInterval); state.timers = [];
+  if (state.raf) cancelAnimationFrame(state.raf); state.raf = 0;
+}
+
+/* ----- live flickering barcode ----- */
+function hash32(text) { let h = 2166136261; for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rng32(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+function paintFlicker(now) {
+  const canvas = $("#flicker"); const frame = $("#live-frame");
+  if (!state.seed || !frame.clientWidth) return;
+  const tick = Math.floor((now / 1000) * state.hz);
+  const w = frame.clientWidth; const h = frame.clientHeight; const ratio = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.floor(w * ratio)) { canvas.width = Math.floor(w * ratio); canvas.height = Math.floor(h * ratio); state.tick = -1; }
+  if (tick === state.tick) return;
+  state.tick = tick;
+  const ctx = canvas.getContext("2d"); ctx.setTransform(ratio, 0, 0, ratio, 0, 0); ctx.clearRect(0, 0, w, h);
+  const rnd = rng32(hash32(state.seed + ":" + tick)); const cells = 28; const cell = w / cells; const rows = Math.ceil(h / cell);
+  const colors = ["#081018", "#f4fbff", "#3d9cf0", "#7cf0d0", "#ffd36a"];
+  for (let y = 0; y < rows; y += 1) for (let x = 0; x < cells; x += 1) {
+    if (!(x < 3 || y < 3 || x >= cells - 3 || y >= rows - 3)) continue;
+    const v = rnd(); if (v < 0.12) continue;
+    ctx.fillStyle = colors[Math.floor(v * colors.length) % colors.length]; ctx.fillRect(x * cell, y * cell, cell + 0.6, cell + 0.6);
+  }
+}
+function startFlicker() { const loop = (t) => { paintFlicker(t); state.raf = requestAnimationFrame(loop); }; state.raf = requestAnimationFrame(loop); }
+
+async function refreshBarcode() {
   if (!state.roomId) return;
   try {
-    const presence = await api("/api/rooms/" + state.roomId + "/presence");
-    showNetwork(presence);
-    showScreenQrSetting(presence);
-  } catch (_err) { /* the room may not be paired yet */ }
+    const body = await api("/api/rooms/" + state.roomId + "/barcode");
+    state.seed = body.flicker_seed; state.hz = body.qr_flicker_hz || 20;
+    if (body.code !== state.code) { state.code = body.code; $("#live-qr").innerHTML = ZooQR.toSvg(body.code, 5); }
+    $("#live-level").style.width = Math.min(100, (body.expires_in / body.qr_frame_seconds) * 100) + "%";
+  } catch (_err) { /* room closed */ }
 }
 
-async function loadSummaryEditor() {
-  if (!state.roomId) return;
-  const body = await api("/api/rooms/" + state.roomId + "/summary");
-  const box = document.querySelector("#summary-draft");
-  if (box && !box.value.trim()) box.value = body.draft || "";
-  const note = document.querySelector("#summary-state");
-  if (!note) return;
-  if (body.published && body.closed) note.textContent = "Published. Students can read it now.";
-  else if (body.published) note.textContent = "Published. Students see it after you close the room.";
-  else if (body.draft) note.textContent = "Draft saved. Students cannot read it yet.";
+/* ----- dashboard ----- */
+async function refreshDashboard() {
+  const d = await api("/api/rooms/" + state.roomId + "/dashboard");
+  $("#room-title-view").textContent = d.title + (d.closed ? " (סגור)" : "");
+  if ($("#join-link").textContent !== d.student_url) {
+    $("#join-link").textContent = d.student_url; $("#join-link").href = d.student_url;
+    $("#join-qr").innerHTML = ZooQR.toSvg(d.student_url, 4);
+  }
+  $("#c-in").textContent = d.counts.in_class; $("#c-remote").textContent = d.counts.remote;
+  $("#c-pending").textContent = d.counts.pending; $("#c-conflicts").textContent = d.counts.conflicts;
+  $("#zone-map").innerHTML = ZONES.map((z) => `<div><b>${d.zones[z] || 0}</b>${ZONE_HE[z]}</div>`).join("");
+  $("#students").innerHTML = d.students.map((s) => `<tr><td>${s.checked ? "✓" : ""}</td><td>${esc(s.name)}</td><td>${esc(s.mode)}</td><td>${esc(s.state_text)}</td><td>${esc(ZONE_HE[s.zone] || "")}</td></tr>`).join("");
+  renderConflicts(d.conflicts);
+  $("#questions").innerHTML = d.questions.map((q) => `<li><span class="tag">${q.votes}▲</span> ${esc(q.text)} <span class="note">${esc(q.name)}</span></li>`).join("") || '<li class="note">אין עדיין</li>';
+  $("#comments").innerHTML = d.comments.map((c) => `<li>${esc(c.text)} <span class="note">${esc(c.name)}</span></li>`).join("") || '<li class="note">אין עדיין</li>';
+  $("#polls").innerHTML = d.polls.map((p) => `<div style="margin-top:.7rem"><b>${esc(p.question)}</b> <span class="note">${p.answer_count} תשובות</span>
+    ${Object.entries(p.counts || {}).map(([o, n]) => `<div>${esc(o)}${o === p.correct_option ? " ✓" : ""}: ${n}</div>`).join("")}
+    ${p.open ? `<button class="ghost" data-close-poll="${esc(p.id)}" type="button">סגור סקר</button>` : '<span class="tag">סגור</span>'}</div>`).join("");
+  document.querySelectorAll("[data-close-poll]").forEach((b) => b.addEventListener("click", () => api(`/api/rooms/${state.roomId}/polls/${b.dataset.closePoll}/close`, { method: "POST" }).then(refreshDashboard)));
+  $("#homework").innerHTML = d.homework.map((h) => `<li>${esc(h.title)} <span class="note">${esc(h.filename)} · ${Math.ceil(h.size / 1024)}KB</span></li>`).join("");
+  if (d.summary && !$("#summary-state").dataset.shown) { $("#summary-state").textContent = "סיכום מפורסם לסטודנטים."; }
 }
 
-const PROOF_TEXT = { both: "sound or rotating QR", sound: "sound only", qr: "rotating QR only" };
-
-function updateBandNote() {
-  const node = document.querySelector("#attendance-band-note");
-  if (!node) return;
-  const band = window.ZooFSK ? ZooFSK.bandOf(state.band) : null;
-  const bandName = { ultrasonic: "ultrasonic", near: "near-ultrasonic", audible: "audible" }[state.band] || state.band;
-  const proof = PROOF_TEXT[state.proof] || state.proof;
-  node.textContent = state.proof === "qr"
-    ? "In-class rows used the rotating one-time code (" + proof + ")."
-    : "In-class rows used the rotating one-time code, " + bandName + " band" +
-      (band ? " " + band.label : "") + " (" + proof + ").";
-}
-
-async function listOpenRooms() {
-  const box = document.querySelector("#open-rooms");
-  if (!box) return;
-  box.textContent = "";
-  let body;
-  try { body = await api("/api/rooms"); } catch (_err) { return; }
-  const rooms = (body && body.rooms) || [];
-  if (!rooms.length) return;
-  const title = document.createElement("p");
-  title.textContent = "Open rooms on this server:";
-  box.appendChild(title);
-  rooms.forEach((room) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "secondary";
-    button.dataset.room = room.id;
-    button.textContent = "Reopen " + room.id + " · " + room.title + " (" + room.counts.in_class + " in class, " + room.counts.remote + " remote)";
-    button.addEventListener("click", async () => {
-      sessionStorage.setItem(ROOM_KEY, room.id);
-      await restoreRoom();
-    });
-    box.appendChild(button);
-  });
-}
-
-function forgetRoom(message) {
-  state.roomId = null;
-  state.closed = false;
-  sessionStorage.removeItem(ROOM_KEY);
-  document.querySelector("#play").disabled = true;
-  document.querySelector("#close-room").disabled = true;
-  document.querySelector("#room-info").textContent = message;
-  document.querySelector("#student-link").textContent = message;
-  document.querySelector("#qr").hidden = true;
-  document.querySelector("#live-pill").textContent = "Idle";
-}
-
-document.querySelector("#open-room").addEventListener("click", async () => {
-  try {
-    const room = await api("/api/rooms", {
-      method: "POST",
-      body: JSON.stringify({ title: document.querySelector("#title").value }),
-    });
-    showRoom(room);
-    await refreshToken();
-    await refreshOverview();
-    await refreshSheet();
-  } catch (err) {
-    document.querySelector("#room-info").textContent = err.message;
-  }
-});
-
-document.querySelector("#close-room").addEventListener("click", async () => {
-  if (!state.roomId) return;
-  try {
-    await api("/api/rooms/" + state.roomId + "/close", { method: "POST", body: "{}" });
-    state.closed = true;
-    stopBeacon();
-    document.querySelector("#play").disabled = true;
-    document.querySelector("#close-room").disabled = true;
-    document.querySelector("#live-pill").textContent = "Closed";
-    await refreshOverview();
-  } catch (err) {
-    document.querySelector("#room-info").textContent = err.message;
-  }
-});
-
-async function restoreRoom() {
-  const saved = sessionStorage.getItem(ROOM_KEY);
-  if (!saved) {
-    await listOpenRooms();
-    return;
-  }
-  try {
-    const room = await api("/api/rooms/" + encodeURIComponent(saved));
-    showRoom(room);
-  } catch (err) {
-    if (err.message === "unknown_room") {
-      forgetRoom("That room is no longer on this server. Open a new one.");
-      await listOpenRooms();
-      return;
-    }
-    document.querySelector("#room-info").textContent = err.message;
-    return;
-  }
-  try { await refreshToken(); } catch (err) {
-    document.querySelector("#beacon-meta").textContent = err.message;
-  }
-  try { await refreshOverview(); } catch (_err) { /* overview is lecturer-only */ }
-  try { await refreshSheet(); } catch (err) { showSheetError(err); }
-}
-
-async function refreshOverview() {
-  if (!state.roomId) return;
-  const body = await api("/api/rooms/" + state.roomId + "/overview");
-  state.closed = !!body.closed;
-  document.querySelector("#count-class").textContent = body.counts.in_class;
-  document.querySelector("#count-remote").textContent = body.counts.remote;
-  document.querySelector("#count-flagged").textContent = body.counts.flagged;
-  document.querySelector("#key-fp").textContent = body.key_fingerprint;
-  document.querySelector("#salt-fp").textContent = body.salt_fingerprint;
-  document.querySelector("#live-pill").textContent = body.closed ? "Closed" : "Live";
-  if (body.audio_band) {
-    state.band = body.audio_band;
-    document.querySelector("#audio-band").value = body.audio_band;
-  }
-  if (body.proof) {
-    state.proof = body.proof;
-    document.querySelector("#proof").value = body.proof;
-    document.querySelector("#play").disabled = body.closed || body.proof === "qr";
-    document.querySelector("#rotating-qr").hidden = body.proof === "sound";
-  }
-  updateBandNote();
-  renderClassMap(body.zones || {});
-  if (body.token) {
-    document.querySelector("#beacon-code").textContent = body.token.code;
-    document.querySelector("#beacon-meta").textContent =
-      "About " + body.token.seconds_left + "s left in this code";
-  }
-}
-
-async function refreshToken() {
-  if (!state.roomId) return;
-  const token = await api("/api/rooms/" + state.roomId + "/token");
-  document.querySelector("#beacon-code").textContent = token.code;
-  document.querySelector("#rotating-code").textContent = token.code;
-  document.querySelector("#beacon-meta").textContent =
-    "About " + token.seconds_left + "s left in this code";
-  if (state.joinLink && window.ZooQR && state.proof !== "sound") {
-    const proofLink = state.joinLink + (state.joinLink.indexOf("?") >= 0 ? "&" : "?") + "code=" + encodeURIComponent(token.code);
-    document.querySelector("#rotating-qr").innerHTML = ZooQR.toSvg(proofLink, 4);
-  }
-  if (token.code !== state.lastCode) {
-    state.lastCode = token.code;
-    state.payloadHex = token.payload_hex;
-    if (state.playing) await startBeacon();
-  }
-}
-
-function ensureAudio() {
-  const Ctx = window.AudioContext || window.webkitAudioContext;
-  if (!state.audio) state.audio = new Ctx();
-  if (!state.gain) {
-    state.gain = state.audio.createGain();
-    state.gain.gain.value = Number(document.querySelector("#volume").value) / 100;
-    state.analyser = state.audio.createAnalyser();
-    state.analyser.fftSize = 2048;
-    state.gain.connect(state.analyser);
-    state.analyser.connect(state.audio.destination);
-  }
-  return state.audio;
-}
-
-function paintWave() {
-  const canvas = document.querySelector("#wave");
-  const ctx = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = "#7ddec0";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  if (!state.analyser || !state.playing) {
-    ctx.moveTo(0, height / 2);
-    ctx.lineTo(width, height / 2);
-    ctx.stroke();
-    return;
-  }
-  const data = new Uint8Array(state.analyser.fftSize);
-  state.analyser.getByteTimeDomainData(data);
-  let energy = 0;
-  for (let i = 0; i < data.length; i += 1) {
-    const x = (i / data.length) * width;
-    const y = (data[i] / 255) * height;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-    const sample = (data[i] - 128) / 128;
-    energy += sample * sample;
-  }
-  ctx.stroke();
-  const level = Math.min(100, Math.sqrt(energy / data.length) * 180);
-  document.querySelector("#beacon-level").style.width = level + "%";
-  document.querySelector("#beacon-level-text").textContent = state.playing
-    ? "Beacon is playing. Level " + Math.round(level)
-    : "Beacon is off.";
-}
-
-function loopWave() {
-  paintWave();
-  state.raf = requestAnimationFrame(loopWave);
-}
-
-async function startBeacon() {
-  if (!state.payloadHex || state.closed) return;
-  const audio = ensureAudio();
-  if (audio.state === "suspended") await audio.resume();
-  const bytes = ZooFSK.hexToBytes(state.payloadHex);
-  const pcm = ZooFSK.encode(bytes, audio.sampleRate, state.band || "ultrasonic");
-  const buffer = audio.createBuffer(1, pcm.length, audio.sampleRate);
-  buffer.getChannelData(0).set(pcm);
-  if (state.source) {
-    try { state.source.stop(); } catch (_err) { /* already stopped */ }
-  }
-  const source = audio.createBufferSource();
-  source.buffer = buffer;
-  source.loop = true;
-  source.connect(state.gain);
-  source.start();
-  state.source = source;
-  state.playing = true;
-  document.querySelector("#stop").disabled = false;
-  document.querySelector("#beacon-level-text").textContent = "Beacon is playing.";
-  if (!state.raf) loopWave();
-}
-
-function stopBeacon() {
-  if (state.source) {
-    try { state.source.stop(); } catch (_err) { /* already stopped */ }
-  }
-  state.source = null;
-  state.playing = false;
-  document.querySelector("#stop").disabled = true;
-  document.querySelector("#beacon-level").style.width = "0";
-  document.querySelector("#beacon-level-text").textContent = "Beacon is off.";
-  paintWave();
-}
-
-document.querySelector("#volume").addEventListener("input", () => {
-  if (state.gain) state.gain.gain.value = Number(document.querySelector("#volume").value) / 100;
-});
-
-document.querySelector("#play").addEventListener("click", async () => {
-  try {
-    await refreshToken();
-    await startBeacon();
-  } catch (err) {
-    document.querySelector("#beacon-meta").textContent = err.message;
-  }
-});
-
-document.querySelector("#stop").addEventListener("click", stopBeacon);
-
-document.querySelector("#save-proof").addEventListener("click", async () => {
-  if (!state.roomId) return;
-  try {
-    const saved = await api("/api/rooms/" + state.roomId + "/lesson-settings", {
-      method: "POST",
-      body: JSON.stringify({
-        audio_band: document.querySelector("#audio-band").value,
-        proof: document.querySelector("#proof").value,
-      }),
-    });
-    state.band = saved.audio_band;
-    state.proof = saved.proof;
-    updateBandNote();
-    document.querySelector("#proof-state").textContent = "Saved. Phones follow " + saved.audio_band + " / " + saved.proof + ".";
-    document.querySelector("#play").disabled = state.closed || saved.proof === "qr";
-    document.querySelector("#rotating-qr").hidden = saved.proof === "sound";
-  } catch (err) {
-    document.querySelector("#proof-state").textContent = err.message;
-  }
-});
-
-document.querySelector("#test-device").addEventListener("click", async () => {
-  const note = document.querySelector("#test-device-status");
-  note.textContent = "Listening on this device…";
-  try {
-    const audio = ensureAudio();
-    if (audio.state === "suspended") await audio.resume();
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
-    });
-    const source = audio.createMediaStreamSource(stream);
-    const processor = audio.createScriptProcessor(4096, 1, 1);
-    const chunks = [];
-    processor.onaudioprocess = (event) => {
-      chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
-      let total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-      const keep = audio.sampleRate * 2;
-      while (total > keep && chunks.length > 1) total -= chunks.shift().length;
-      const merged = new Float32Array(total);
-      let offset = 0;
-      chunks.forEach((chunk) => { merged.set(chunk, offset); offset += chunk.length; });
-      const report = ZooFSK.inspect(merged, audio.sampleRate, state.band || "ultrasonic");
-      const heard = report.bytes ? ZooFSK.base32(report.bytes) : "";
-      note.textContent = "Test from this device · " + Math.round(report.power0) + " / " + Math.round(report.power1) +
-        (heard ? " · heard " + heard : " · listening…");
-    };
-    source.connect(processor);
-    processor.connect(audio.destination);
-    window.setTimeout(() => {
-      processor.disconnect();
-      source.disconnect();
-      stream.getTracks().forEach((track) => track.stop());
-    }, 4000);
-  } catch (err) {
-    note.textContent = err.message;
-  }
-});
-
-document.querySelector("#test-tone").addEventListener("click", async () => {
-  const audio = ensureAudio();
-  if (audio.state === "suspended") await audio.resume();
-  const osc = audio.createOscillator();
-  osc.frequency.value = ZooFSK.bandOf(state.band || "ultrasonic").f0;
-  osc.connect(state.gain);
-  osc.start();
-  state.playing = true;
-  window.setTimeout(() => {
-    try { osc.stop(); } catch (_err) { /* already stopped */ }
-    if (!state.source) {
-      state.playing = false;
-      document.querySelector("#beacon-level-text").textContent = "Test tone finished. Band is 18/19 kHz.";
-    }
-  }, 450);
-});
-
-function renderClassMap(zones) {
-  const map = document.querySelector("#class-map");
-  if (!map) return;
-  const order = [
-    "front-left", "front-center", "front-right",
-    "middle-left", "middle-center", "middle-right",
-    "back-left", "back-center", "back-right",
-  ];
-  map.querySelectorAll(".zone-cell").forEach((cell) => cell.remove());
-  order.forEach((zone) => {
-    const count = zones && zones[zone] ? zones[zone] : 0;
-    const cell = document.createElement("div");
-    cell.className = "zone-cell";
-    const countNode = document.createElement("strong");
-    countNode.textContent = String(count);
-    const label = document.createElement("div");
-    label.className = "note";
-    label.textContent = zone.replace("-", " ");
-    cell.appendChild(countNode);
-    cell.appendChild(label);
-    map.appendChild(cell);
-  });
-}
-
-function renderSheet(records) {
-  if (!records.length) {
-    document.querySelector("#sheet").innerHTML = "<p class=\"note\">Nobody has checked in.</p>";
-    return;
-  }
-  const rows = records.map((record) => {
-    const flags = record.flags && record.flags.length ? record.flags.join(", ") : "";
-    const kind = record.mode === "remote" ? "Remote" : "In class";
-    const issued = record.attendance_id || record.external_token || "";
-    const verified = record.verified ? "Verified" : "Not verified";
-    return "<tr><td>" + escapeHtml(record.name || "") + "</td><td>" + escapeHtml(record.student_id) +
-      "</td><td class=\"mono\">" + escapeHtml(issued) + "</td><td>" + kind + "</td><td>" + escapeHtml(record.seat_zone) +
-      "</td><td>" + escapeHtml(verified) + "</td><td>" + escapeHtml(record.confidence) +
-      "</td><td class=\"flag\">" + escapeHtml(flags) + "</td><td>" + escapeHtml(record.subnet) + "</td></tr>";
+function renderConflicts(list) {
+  const box = $("#conflicts");
+  if (!list.length) { box.textContent = "אין כרגע."; return; }
+  box.innerHTML = list.map((c) => {
+    const email = c.email || null;
+    const emailHtml = !email ? "" : email.demo_code
+      ? `<p class="warn">${esc(email.demo_label)}: <span class="demo-code">${esc(email.demo_code)}</span> (פג בעוד ${email.expires_in} שנ׳)</p>`
+      : email.open ? `<p class="note">נשלח קוד למייל הרשום של השם (פג בעוד ${email.expires_in} שנ׳).</p>` : "";
+    return `<div class="card"><b>${esc(c.name)}</b>${emailHtml}<ul class="plain">${c.claims.map((k) => `<li>
+      ${k.mode === "in_class" ? "בכיתה" : "מרחוק"} · ${esc(k.state_text)} ${k.zone ? "· " + esc(ZONE_HE[k.zone]) : ""}
+      <button data-decide="${esc(k.claim_id)}" data-action="accept" type="button">זה הוא</button>
+      <button class="bad" data-decide="${esc(k.claim_id)}" data-action="reject" type="button">דחה</button></li>`).join("")}</ul></div>`;
   }).join("");
-  document.querySelector("#sheet").innerHTML =
-    "<table><thead><tr><th>Name</th><th>Id</th><th>Attendance id</th><th>Mode</th><th>Zone</th><th>Session</th><th>Confidence</th><th>Flags</th><th>Subnet</th></tr></thead><tbody>" +
-    rows + "</tbody></table>";
+  box.querySelectorAll("[data-decide]").forEach((b) => b.addEventListener("click", () =>
+    api(`/api/rooms/${state.roomId}/conflicts/decide`, { method: "POST", body: JSON.stringify({ claim_id: b.dataset.decide, action: b.dataset.action }) }).then(refreshDashboard)));
 }
 
-async function refreshSheet() {
-  if (!state.roomId) return;
-  const body = await api("/api/rooms/" + state.roomId + "/attendance");
-  renderSheet(body.records || []);
-  const questions = await api("/api/rooms/" + state.roomId + "/questions");
-  const polls = await api("/api/rooms/" + state.roomId + "/polls");
-  const homework = await api("/api/rooms/" + state.roomId + "/homework");
-  const list = document.querySelector("#question-list");
-  const items = questions.questions || [];
-  list.innerHTML = items.length
-    ? items.map((item) => "<p><strong>" + item.votes + "</strong> · " + escapeHtml(item.text) + "</p>").join("")
-    : "No questions yet.";
-  renderRoster().catch(() => {});
-  document.querySelector("#polls").innerHTML = (polls.polls || []).map((poll) => {
-    return "<p><strong>" + escapeHtml(poll.question) + "</strong> (" + poll.answer_count + " answers)</p><pre>" +
-      escapeHtml(JSON.stringify({ counts: poll.counts, by_zone: poll.by_zone, correct_option: poll.correct_option }, null, 2)) + "</pre>";
-  }).join("") || "<p class=\"note\">No polls yet.</p>";
-  const box = document.querySelector("#homework");
-  box.innerHTML = (homework.submissions || []).map((item) => {
-    return "<p>" + escapeHtml(item.name || item.student_id) + " · " + item.id +
-      " <button type=\"button\" data-hw=\"" + item.id + "\">Review</button></p>";
-  }).join("") || "No submissions.";
-  box.querySelectorAll("button[data-hw]").forEach((button) => {
-    button.addEventListener("click", () => reviewHomework(button.getAttribute("data-hw")));
-  });
-}
+$("#roster-file").addEventListener("change", async (event) => {
+  const file = event.target.files[0]; if (!file) return;
+  try {
+    const form = new FormData(); form.append("file", file);
+    const r = await api("/api/rooms/" + state.roomId + "/roster", { method: "POST", body: form });
+    $("#roster-state").textContent = `נטענו ${r.imported} שמות (${r.duplicates} כפולים, ${r.skipped} דולגו). המיילים לא מוצגים.`;
+  } catch (err) { $("#roster-state").textContent = err.message; }
+});
 
-document.querySelector("#refresh").addEventListener("click", () => refreshSheet().catch(showSheetError));
+$("#poll-create").addEventListener("click", async () => {
+  const options = $("#poll-opts").value.split(",").map((s) => s.trim()).filter(Boolean);
+  await api("/api/rooms/" + state.roomId + "/polls", { method: "POST", body: JSON.stringify({ question: $("#poll-q").value, options, correct_option: $("#poll-correct").value.trim() || null }) });
+  $("#poll-q").value = ""; $("#poll-opts").value = ""; $("#poll-correct").value = ""; refreshDashboard();
+});
+
+$("#hw-upload").addEventListener("click", async () => {
+  const file = $("#hw-file").files[0]; if (!file) return;
+  const form = new FormData(); form.append("file", file); form.append("title", $("#hw-title").value);
+  await api("/api/rooms/" + state.roomId + "/homework", { method: "POST", body: form });
+  $("#hw-file").value = ""; $("#hw-title").value = ""; refreshDashboard();
+});
+
+$("#summary-generate").addEventListener("click", async () => {
+  const note = $("#summary-state"); note.dataset.shown = "1";
+  const key = $("#llm-key");
+  try {
+    const file = $("#transcript").files[0];
+    if (file) await api("/api/rooms/" + state.roomId + "/transcript", { method: "POST", body: JSON.stringify({ transcript: await file.text() }) });
+    note.textContent = "יוצר סיכום…";
+    const r = await api("/api/rooms/" + state.roomId + "/summary/generate", { method: "POST", body: JSON.stringify({ provider: $("#llm-provider").value, model: $("#llm-model").value, api_key: key.value }) });
+    $("#summary-text").value = r.text; note.textContent = "הסיכום פורסם לכל הסטודנטים בשיעור.";
+  } catch (err) { note.textContent = err.message; }
+  finally { key.value = ""; }
+});
+
+$("#summary-publish").addEventListener("click", async () => {
+  try { await api("/api/rooms/" + state.roomId + "/summary", { method: "POST", body: JSON.stringify({ text: $("#summary-text").value }) }); $("#summary-state").textContent = "פורסם."; }
+  catch (err) { $("#summary-state").textContent = err.message; }
+});
 
 async function download(kind) {
-  if (!state.roomId) return;
-  const response = await fetch("/api/rooms/" + state.roomId + "/export." + kind, { headers: authHeaders() });
-  if (!response.ok) throw new Error("Export failed (" + response.status + ")");
-  const blob = await response.blob();
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = state.roomId + "-attendance." + kind;
-  link.click();
+  const res = await fetch(`/api/rooms/${state.roomId}/export.${kind}`, { headers: { "x-lecturer-session": state.token } });
+  const url = URL.createObjectURL(await res.blob()); const a = document.createElement("a");
+  a.href = url; a.download = `${state.roomId}-attendance.${kind}`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+$("#export-csv").addEventListener("click", (e) => { e.preventDefault(); download("csv"); });
+$("#export-xlsx").addEventListener("click", (e) => { e.preventDefault(); download("xlsx"); });
+$("#close-room").addEventListener("click", async () => {
+  if (!confirm("לסגור את השיעור?")) return;
+  await api("/api/rooms/" + state.roomId + "/close", { method: "POST" }); stopRoom(); refreshDashboard();
+});
 
-document.querySelector("#csv").addEventListener("click", () => download("csv").catch(showSheetError));
-document.querySelector("#xlsx").addEventListener("click", () => download("xlsx").catch(showSheetError));
-
-function showSheetError(err) {
-  document.querySelector("#sheet").innerHTML = "<p class=\"bad\">" + escapeHtml(err.message) + "</p>";
-}
-
-document.querySelector("#add-poll").addEventListener("click", async () => {
+(async function boot() {
+  if (!state.token) { show("login"); return; }
   try {
-    const options = document.querySelector("#options").value.split("\n").map((line) => line.trim()).filter(Boolean);
-    const correct = document.querySelector("#correct").value.trim();
-    await api("/api/rooms/" + state.roomId + "/polls", {
-      method: "POST",
-      body: JSON.stringify({
-        question: document.querySelector("#question").value,
-        options: options,
-        correct_option: correct || null,
-      }),
-    });
-    await refreshSheet();
-  } catch (err) {
-    document.querySelector("#polls").textContent = err.message;
-  }
-});
-
-function readableSummary(payload) {
-  const report = payload && payload.report ? payload.report : payload;
-  if (!report || typeof report !== "object") return "";
-  const lines = [];
-  const topics = Array.isArray(report.topics) ? report.topics : [];
-  if (topics.length) {
-    lines.push("Topics");
-    topics.forEach((topic) => {
-      if (typeof topic === "string") lines.push("- " + topic);
-      else if (topic && topic.title) lines.push("- " + topic.title);
-    });
-  }
-  const findings = Array.isArray(report.zone_findings) ? report.zone_findings : [];
-  if (findings.length) {
-    lines.push("", "Seat zones");
-    findings.forEach((item) => lines.push("- " + (typeof item === "string" ? item : JSON.stringify(item))));
-  }
-  const recommendations = Array.isArray(report.recommendations) ? report.recommendations : [];
-  if (recommendations.length) {
-    lines.push("", "Next lesson");
-    recommendations.forEach((item) => lines.push("- " + item));
-  }
-  if (!lines.length) return JSON.stringify(report, null, 2);
-  return lines.join("\n");
-}
-
-document.querySelector("#summarize").addEventListener("click", async () => {
-  const out = document.querySelector("#summary");
-  const note = document.querySelector("#summary-state");
-  try {
-    const file = document.querySelector("#transcript").files[0];
-    if (!file) throw new Error("Choose a transcript file first.");
-    const transcript = await file.text();
-    await api("/api/rooms/" + state.roomId + "/transcript", {
-      method: "POST",
-      body: JSON.stringify({ transcript: transcript }),
-    });
-    out.hidden = false;
-    out.textContent = "Running the agent…";
-    note.textContent = "Running the agent…";
-    const report = await api("/api/rooms/" + state.roomId + "/agent/summary", { method: "POST", body: "{}" });
-    out.textContent = JSON.stringify(report, null, 2);
-    const text = readableSummary(report);
-    document.querySelector("#summary-draft").value = text;
-    await api("/api/rooms/" + state.roomId + "/summary", {
-      method: "POST",
-      body: JSON.stringify({ text: text }),
-    });
-    note.textContent = "Draft ready. Edit it, then publish. Students cannot read it yet.";
-  } catch (err) {
-    out.textContent = err.message;
-    note.textContent = err.message;
-  }
-});
-
-document.querySelector("#publish-summary").addEventListener("click", async () => {
-  const note = document.querySelector("#summary-state");
-  try {
-    if (!state.roomId) throw new Error("Open a room first.");
-    const text = document.querySelector("#summary-draft").value;
-    await api("/api/rooms/" + state.roomId + "/summary/publish", {
-      method: "POST",
-      body: JSON.stringify({ text: text }),
-    });
-    note.textContent = state.closed
-      ? "Published. Students can read it now."
-      : "Published. Students see it after you close the room.";
-  } catch (err) {
-    note.textContent = err.message === "missing_summary"
-      ? "Write a summary before publishing."
-      : err.message;
-  }
-});
-
-document.querySelector("#summary-draft").addEventListener("blur", () => {
-  if (!state.roomId) return;
-  api("/api/rooms/" + state.roomId + "/summary", {
-    method: "POST",
-    body: JSON.stringify({ text: document.querySelector("#summary-draft").value }),
-  }).catch(() => {});
-});
-
-function renderAttention(body) {
-  document.querySelector("#attention").textContent = JSON.stringify(body, null, 2);
-  const zones = [
-    "front-left", "front-center", "front-right",
-    "middle-left", "middle-center", "middle-right",
-    "back-left", "back-center", "back-right",
-  ];
-  const map = body.zones || {};
-  document.querySelector("#attention-map").innerHTML = zones.map((zone) => {
-    const item = map[zone];
-    const level = item ? item.mean_level : 0;
-    const tone = Math.round(255 - level * 140);
-    return "<div class=\"zone-cell\" style=\"background:rgb(" + tone + "," + (220 - Math.round(level * 80)) + "," + (200 - Math.round(level * 40)) + ")\">" +
-      "<strong>" + zone.replace("-", " ") + "</strong><div class=\"note\">" +
-      (item ? item.mean_level + " · " + item.samples + " samples" : "No samples") + "</div></div>";
-  }).join("");
-}
-
-document.querySelector("#sample-attention").addEventListener("click", async () => {
-  try {
-    const body = await api("/api/rooms/" + state.roomId + "/attention/samples", {
-      method: "POST",
-      body: JSON.stringify({
-        samples: [
-          { t_seconds: 120, zone: "front-left", level: 0.8, source: "sample-not-camera" },
-          { t_seconds: 600, zone: "back-right", level: 0.3, source: "sample-not-camera" },
-        ],
-      }),
-    });
-    renderAttention(body);
-  } catch (err) {
-    document.querySelector("#attention").textContent = err.message;
-  }
-});
-
-document.querySelector("#camera-toggle").addEventListener("change", async (event) => {
-  const note = document.querySelector("#camera-state");
-  const video = document.querySelector("#camera-preview");
-  if (!event.target.checked) {
-    if (state.camera) state.camera.getTracks().forEach((track) => track.stop());
-    state.camera = null;
-    video.hidden = true;
-    video.srcObject = null;
-    note.textContent = "Camera is off. Nothing was uploaded.";
-    return;
-  }
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    event.target.checked = false;
-    note.textContent = "This browser has no camera API. The dashboard still works without one.";
-    return;
-  }
-  try {
-    state.camera = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    video.srcObject = state.camera;
-    video.hidden = false;
-    note.textContent = "Preview is local. The video is not uploaded or analyzed.";
-  } catch (_err) {
-    event.target.checked = false;
-    note.textContent = "Camera permission was denied, or this machine has no camera. You can still use every other tab.";
-  }
-});
-
-async function reviewHomework(id) {
-  const out = document.querySelector("#summary");
-  try {
-    out.hidden = false;
-    out.textContent = "Running the homework agent…";
-    const report = await api("/api/rooms/" + state.roomId + "/agent/homework", {
-      method: "POST",
-      body: JSON.stringify({ submission_id: id, audience: "lecturer" }),
-    });
-    out.textContent = JSON.stringify(report, null, 2);
-  } catch (err) {
-    out.textContent = err.message;
-  }
-}
-
-document.querySelector("#save-llm").addEventListener("click", async () => {
-  try {
-    const saved = await api("/api/llm/config", { method: "POST", body: JSON.stringify(llmBody(true)) });
-    state.llmConfigLoaded = true;
-    state.llmKeyConfigured = !!saved.key_configured;
-    document.querySelector("#api-key").value = "";
-    document.querySelector("#llm-state").textContent =
-      "Saved. Key stored: " + (saved.key_configured ? "yes" : "no") + ". Ready: " + saved.ready + ".";
-    document.querySelector("#key-banner").hidden = !!saved.key_configured;
-  } catch (err) {
-    document.querySelector("#llm-state").textContent = err.message;
-  }
-});
-
-function providerNeedsKey(provider) {
-  return provider !== "ollama" && provider !== "openai_compatible";
-}
-
-document.querySelector("#test-llm").addEventListener("click", async () => {
-  const box = document.querySelector("#llm-state");
-  const provider = document.querySelector("#provider").value;
-  const typedKey = document.querySelector("#api-key").value.trim();
-  if (!typedKey && providerNeedsKey(provider) && state.llmConfigLoaded && !state.llmKeyConfigured) {
-    box.textContent = "Enter an API key first.";
-    return;
-  }
-  box.textContent = "Testing…";
-  try {
-    const result = await api("/api/llm/test", { method: "POST", body: JSON.stringify(llmBody(true)) });
-    if (result.category === "missing_key") {
-      state.llmConfigLoaded = true;
-      state.llmKeyConfigured = false;
-      box.textContent = result.message || "Enter an API key first.";
-      return;
-    }
-    const bits = [
-      result.status,
-      result.provider,
-      result.model,
-      result.latency_ms != null ? result.latency_ms + " ms" : "",
-      "tool calling: " + result.tool_calling,
-      result.category || "",
-      result.message || "",
-    ].filter(Boolean);
-    box.textContent = bits.join(" · ");
-    document.querySelector("#api-key").value = "";
-  } catch (err) {
-    box.textContent = err.message;
-  }
-});
-
-function llmBody(includeKey) {
-  const body = {
-    provider: document.querySelector("#provider").value,
-    model: document.querySelector("#model").value,
-    base_url: document.querySelector("#base-url").value,
-  };
-  const key = document.querySelector("#api-key").value.trim();
-  if (includeKey && key) body.api_key = key;
-  return body;
-}
-
-async function loadLlm() {
-  try {
-    const config = await api("/api/llm/config");
-    state.llmConfigLoaded = true;
-    state.llmKeyConfigured = !!config.key_configured;
-    if (config.provider) document.querySelector("#provider").value = config.provider;
-    if (config.model) document.querySelector("#model").value = config.model;
-    if (config.base_url) document.querySelector("#base-url").value = config.base_url;
-    document.querySelector("#llm-state").textContent =
-      "Key stored: " + (config.key_configured ? "yes" : "no") + ". Ready: " + config.ready + ".";
-    document.querySelector("#key-banner").hidden = !!config.key_configured;
-    return true;
-  } catch (_err) {
-    state.llmConfigLoaded = false;
-    state.llmKeyConfigured = false;
-    document.querySelector("#llm-state").textContent = "Enter the lecturer token to load model settings.";
-    return false;
-  }
-}
-
-async function loadDiagrams() {
-  const body = await api("/api/diagrams");
-  const gallery = document.querySelector("#gallery");
-  gallery.innerHTML = (body.diagrams || []).map((item) => {
-    return "<button type=\"button\" class=\"diagram\" data-src=\"" + escapeHtml(item.src) + "\" data-title=\"" +
-      escapeHtml(item.title) + "\"><img src=\"" + escapeHtml(item.src) + "\" alt=\"" + escapeHtml(item.title) +
-      "\"><span>" + escapeHtml(item.title) + "</span></button>";
-  }).join("") || "<p class=\"note\">No diagrams were found.</p>";
-  gallery.querySelectorAll(".diagram").forEach((button) => {
-    button.addEventListener("click", () => {
-      const dialog = document.querySelector("#lightbox");
-      const image = document.querySelector("#lightbox-img");
-      image.src = button.getAttribute("data-src");
-      image.alt = button.getAttribute("data-title");
-      if (dialog.showModal) dialog.showModal();
-    });
-  });
-}
-
-document.querySelector("#lightbox-close").addEventListener("click", () => {
-  document.querySelector("#lightbox").close();
-});
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
-  }[ch]));
-}
-
-async function renderRoster() {
-  if (!state.roomId) return;
-  const body = await api("/api/rooms/" + state.roomId + "/roster");
-  const rows = body.entries || [];
-  const box = document.querySelector("#roster-sheet");
-  if (!box) return;
-  if (!rows.length) {
-    box.textContent = "No roster yet.";
-    return;
-  }
-  box.innerHTML = "<table><thead><tr><th>Name</th><th>Group</th><th>In class</th><th>Remote</th></tr></thead><tbody>" +
-    rows.map((row) => "<tr><td>" + escapeHtml(row.display) + "</td><td>" + escapeHtml(row.group || "unspecified") +
-      "</td><td>" + (row.in_class ? "✓" : "") + "</td><td>" + (row.remote ? "remote" : "") + "</td></tr>").join("") +
-    "</tbody></table>";
-}
-
-function fillGroups(groups) {
-  const select = document.querySelector("#roster-group");
-  select.replaceChildren();
-  Object.keys(groups || {}).sort().forEach((group) => {
-    const option = document.createElement("option");
-    if (group === "") {
-      option.value = "__blank__";
-      option.textContent = "Unspecified (" + groups[group] + ") — not selected by default";
-    } else {
-      option.value = group;
-      option.textContent = group + " (" + groups[group] + ")";
-    }
-    select.appendChild(option);
-  });
-}
-
-document.querySelector("#upload-roster").addEventListener("click", async () => {
-  const note = document.querySelector("#roster-status");
-  try {
-    if (!state.roomId) throw new Error("Open a room first.");
-    const file = document.querySelector("#roster-file").files[0];
-    if (!file) throw new Error("Choose a CSV first.");
-    const text = await file.text();
-    const result = await api("/api/rooms/" + state.roomId + "/roster", {
-      method: "POST",
-      body: JSON.stringify({ text: text }),
-    });
-    note.textContent = "Imported " + result.imported + ". Duplicates " + result.duplicates + ". Skipped " + result.skipped + ".";
-    fillGroups(result.groups || {});
-    await renderRoster();
-  } catch (err) {
-    note.textContent = err.message;
-  }
-});
-
-document.querySelector("#use-group").addEventListener("click", async () => {
-  const note = document.querySelector("#roster-status");
-  try {
-    const value = document.querySelector("#roster-group").value;
-    const body = value === "__blank__" ? { include_unspecified: true } : { group: value };
-    await api("/api/rooms/" + state.roomId + "/roster/group", { method: "POST", body: JSON.stringify(body) });
-    note.textContent = value === "__blank__" ? "Showing unspecified rows only." : "Showing group " + value + ".";
-    await renderRoster();
-  } catch (err) {
-    note.textContent = err.message;
-  }
-});
-
-document.querySelector("#pair-helper").addEventListener("click", async () => {
-  const note = document.querySelector("#helper-status");
-  try {
-    const paired = await api("/api/rooms/" + state.roomId + "/presence/pair", { method: "POST", body: "{}" });
-    document.querySelector("#helper-key").value = paired.helper_key || "";
-    note.textContent = "Paired " + paired.helper_id + ". Copy the key from the password box into the launcher. This page does not keep it.";
-  } catch (err) {
-    note.textContent = err.message;
-  }
-});
-
-document.querySelector("#revoke-helper").addEventListener("click", async () => {
-  try {
-    await api("/api/rooms/" + state.roomId + "/presence/revoke", { method: "POST", body: "{}" });
-    document.querySelector("#helper-key").value = "";
-    document.querySelector("#helper-status").textContent = "Helper revoked.";
-  } catch (err) {
-    document.querySelector("#helper-status").textContent = err.message;
-  }
-});
-
-function showScreenQrSetting(body) {
-  if (!body) return;
-  const toggle = document.querySelector("#screen-qr-toggle");
-  if (toggle && typeof body.qr_required === "boolean") toggle.checked = body.qr_required;
-  const status = document.querySelector("#screen-qr-status");
-  if (status) {
-    status.textContent = body.qr_required === false
-      ? "The flickering barcode is off. The checkmark uses the network verifier only."
-      : "The flickering barcode is on. Students must hold the camera on the live screen for 2 seconds. A still photo is rejected. Each decoded frame is checked against the server clock.";
-  }
-}
-
-function hash32(text) {
-  let h = 2166136261;
-  const raw = String(text || "");
-  for (let i = 0; i < raw.length; i += 1) {
-    h ^= raw.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a = (a + 0x6D2B79F5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function paintScreenQrFlicker(nowMs) {
-  const canvas = document.querySelector("#screen-qr-flicker");
-  const frame = document.querySelector("#screen-qr-frame");
-  if (!canvas || !frame || !state.flickerSeed) return;
-  const hz = state.flickerHz || 20;
-  const tick = Math.floor((Number(nowMs) / 1000) * hz);
-  const width = frame.clientWidth || 0;
-  const height = frame.clientHeight || 0;
-  if (!width || !height) return;
-  const ratio = window.devicePixelRatio || 1;
-  const pxW = Math.max(1, Math.floor(width * ratio));
-  const pxH = Math.max(1, Math.floor(height * ratio));
-  if (canvas.width !== pxW || canvas.height !== pxH) {
-    canvas.width = pxW;
-    canvas.height = pxH;
-    state.flickerTick = -1;
-  }
-  if (tick === state.flickerTick) return;
-  state.flickerTick = tick;
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  const rng = mulberry32(hash32(state.flickerSeed + ":" + tick));
-  const cells = 28;
-  const cell = width / cells;
-  const rows = Math.max(cells, Math.ceil(height / cell));
-  const border = 3;
-  const colors = ["#081018", "#f4fbff", "#3d9cf0", "#7cf0d0", "#ffd36a"];
-  for (let y = 0; y < rows; y += 1) {
-    for (let x = 0; x < cells; x += 1) {
-      const onBorder = x < border || y < border || x >= cells - border || y >= rows - border;
-      if (!onBorder) continue;
-      const v = rng();
-      if (v < 0.12) continue;
-      ctx.fillStyle = colors[Math.floor(v * colors.length) % colors.length];
-      ctx.fillRect(x * cell, y * cell, cell + 0.6, cell + 0.6);
-    }
-  }
-}
-
-function startScreenQrFlicker() {
-  const frame = document.querySelector("#screen-qr-frame");
-  if (frame) frame.classList.add("is-live");
-  if (state.flickerRaf) return;
-  const tick = (now) => {
-    paintScreenQrFlicker(now);
-    state.flickerRaf = window.requestAnimationFrame(tick);
-  };
-  state.flickerRaf = window.requestAnimationFrame(tick);
-}
-
-function stopScreenQrFlicker() {
-  if (state.flickerRaf) window.cancelAnimationFrame(state.flickerRaf);
-  state.flickerRaf = 0;
-  const frame = document.querySelector("#screen-qr-frame");
-  if (frame) frame.classList.remove("is-live");
-}
-
-async function refreshScreenQr() {
-  if (!state.roomId) return;
-  const stage = document.querySelector("#screen-qr-stage");
-  const box = document.querySelector("#screen-qr");
-  const meta = document.querySelector("#screen-qr-meta");
-  const codeNode = document.querySelector("#screen-qr-code");
-  const level = document.querySelector("#screen-qr-level");
-  if (!box) return;
-  const body = await api("/api/rooms/" + state.roomId + "/presence/screen-qr");
-  showScreenQrSetting(body);
-  if (stage) stage.hidden = body.qr_required === false;
-  if (body.qr_required === false) {
-    stopScreenQrFlicker();
-    return;
-  }
-  if (body.flicker_seed) state.flickerSeed = body.flicker_seed;
-  if (body.qr_flicker_hz) state.flickerHz = Number(body.qr_flicker_hz);
-  startScreenQrFlicker();
-  if (body.code && body.code !== state.screenQrCode) {
-    state.screenQrCode = body.code;
-    if (window.ZooQR) box.innerHTML = ZooQR.toSvg(body.code, 5);
-  }
-  if (codeNode) {
-    const raw = String(body.code || "");
-    codeNode.textContent = raw ? "ZM1…" + raw.slice(-8) : "—";
-  }
-  const left = Number(body.expires_in || 0);
-  const frame = Number(body.qr_frame_seconds || 0.25);
-  if (level) level.style.width = Math.max(0, Math.min(100, (left / frame) * 100)) + "%";
-  if (meta) {
-    const hold = body.qr_hold_seconds || 2;
-    const age = body.qr_max_age_seconds || 6;
-    meta.textContent = body.qr_required === false
-      ? "The flickering barcode is turned off for this room."
-      : "הברקוד מרצד על המסך. הסטודנט מחזיק את המצלמה " + hold + " שניות. צילום סטטי נדחה. השרת בודק כל קוד לפי השעה שלו, עד " + age + " שניות.";
-  }
-}
-
-function showNetwork(body) {
-  if (!body) return;
-  if (body.network_name) document.querySelector("#network-name").value = body.network_name;
-  if (body.bind_host) document.querySelector("#bind-host").value = body.bind_host;
-  if (body.bind_port) document.querySelector("#bind-port").value = body.bind_port;
-  if (body.client_cidr) document.querySelector("#client-cidr").value = body.client_cidr;
-  if (body.network_name) document.querySelector("#wifi-ssid").value = body.network_name;
-  const notes = document.querySelector("#network-diagnostics");
-  notes.textContent = (body.diagnostics || []).join(" ");
-  if (body.bind_url) {
-    document.querySelector("#helper-status").textContent = "Phones open " + body.bind_url + " only if their address is inside " + body.client_cidr + ".";
-  }
-}
-
-document.querySelector("#save-screen-qr").addEventListener("click", async () => {
-  const status = document.querySelector("#screen-qr-status");
-  try {
-    const body = await api("/api/rooms/" + state.roomId + "/presence/screen-qr/settings", {
-      method: "POST",
-      body: JSON.stringify({ required: document.querySelector("#screen-qr-toggle").checked }),
-    });
-    showScreenQrSetting(body);
-    await refreshScreenQr();
-  } catch (err) {
-    status.textContent = err.message;
-  }
-});
-
-document.querySelector("#save-bind").addEventListener("click", async () => {
-  const notes = document.querySelector("#network-diagnostics");
-  try {
-    const body = await api("/api/rooms/" + state.roomId + "/presence/bind", {
-      method: "POST",
-      body: JSON.stringify({
-        network_name: document.querySelector("#network-name").value,
-        bind_host: document.querySelector("#bind-host").value,
-        bind_port: document.querySelector("#bind-port").value,
-        client_cidr: document.querySelector("#client-cidr").value,
-      }),
-    });
-    showNetwork(body);
-  } catch (err) {
-    const text = {
-      missing_network: "Enter both the verifier address and the phone address range.",
-      bad_network: "That address or range is not valid.",
-      bind_outside_range: "The verifier address has to be inside the phone address range.",
-      range_too_wide: "That range is too wide. Use a /24 such as 192.168.137.0/24 or 192.168.2.0/24.",
-      public_range: "Use the private range the hotspot assigns, not a public network.",
-    }[err.message] || err.message;
-    notes.textContent = text;
-  }
-});
-
-function wifiEscape(value) {
-  return String(value).replace(/([\\;,:"])/g, "\\$1");
-}
-
-document.querySelector("#show-wifi-qr").addEventListener("click", () => {
-  const ssid = document.querySelector("#wifi-ssid").value;
-  const password = document.querySelector("#wifi-password").value;
-  const box = document.querySelector("#wifi-qr");
-  if (!ssid) {
-    box.hidden = true;
-    return;
-  }
-  const payload = "WIFI:T:WPA;S:" + wifiEscape(ssid) + ";P:" + wifiEscape(password) + ";;";
-  const svg = window.ZooQR ? ZooQR.toSvg(payload, 4) : "";
-  box.innerHTML = svg;
-  box.hidden = !svg;
-  if (!svg) document.querySelector("#helper-status").textContent = "That Wi-Fi payload is too long for this QR.";
-});
-
-document.querySelector("#add-source").addEventListener("click", async () => {
-  const note = document.querySelector("#source-status");
-  try {
-    await api("/api/rooms/" + state.roomId + "/sources", {
-      method: "POST",
-      body: JSON.stringify({
-        title: document.querySelector("#source-title").value,
-        text: document.querySelector("#source-text").value,
-      }),
-    });
-    document.querySelector("#source-text").value = "";
-    note.textContent = "Source saved. Students can search it. The model stays off.";
-  } catch (err) {
-    note.textContent = err.message;
-  }
-});
-
-document.querySelector("#enable-model").addEventListener("click", async () => {
-  const note = document.querySelector("#source-status");
-  try {
-    const body = await api("/api/rooms/" + state.roomId + "/sources/model", {
-      method: "POST",
-      body: JSON.stringify({ enabled: true }),
-    });
-    note.textContent = body.ready
-      ? "Model answers are on. Only the pasted sources are sent."
-      : "Model answers are allowed, but no key is configured, so students still get source search.";
-  } catch (err) {
-    note.textContent = err.message;
-  }
-});
-
-paintWave();
-if (savedToken) {
-  loadLlm().then((ok) => { if (ok) { showApp(); return restoreRoom(); } return null; });
-}
-setInterval(() => {
-  if (!state.roomId) return;
-  refreshToken().catch(() => {});
-  refreshOverview().catch(() => {});
-  refreshSheet().catch(() => {});
-}, 2000);
-setInterval(() => {
-  if (!state.roomId) return;
-  refreshScreenQr().catch(() => {});
-}, 80);
+    const me = await api("/api/lecturer/me");
+    const roomId = location.hash.slice(1);
+    state.greeting = me.greeting;
+    if (roomId) await enterRoom(roomId).catch(() => enterHome(me.greeting)); else enterHome(me.greeting);
+  } catch (_err) { show("login"); }
+}());

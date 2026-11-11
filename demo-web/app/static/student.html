@@ -1,148 +1,102 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ZooMoodle</title>
-  <link rel="icon" href="/favicon.ico" sizes="16x16">
+  <title>ZooMoodle – סטודנט</title>
+  <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header class="workspace" style="padding-bottom:0">
-    <div class="brand">
-      <div class="mark" aria-hidden="true">Z</div>
-      <div>
-        <strong>ZooMoodle</strong>
-        <div class="note">Join the lesson from this phone. The microphone needs HTTPS.</div>
-      </div>
+<main class="narrow">
+  <h1 id="title">ZooMoodle</h1>
+  <p id="alert" class="bad-text" role="status"></p>
+
+  <section id="step-name" class="card" hidden>
+    <h2>1. בחר את השם שלך</h2>
+    <select id="name"></select>
+    <h2 style="margin-top:1rem">2. איפה אתה?</h2>
+    <div class="row">
+      <button id="go-class" type="button">בכיתה</button>
+      <button id="go-remote" class="ghost" type="button">מרחוק</button>
     </div>
-  </header>
-  <main class="workspace">
-    <section id="step-join" class="card">
-      <h2>Join</h2>
-      <label for="room">Room code</label>
-      <input id="room" autocomplete="off" inputmode="text">
-      <button id="join-continue" type="button">Continue</button>
-      <p id="join-status" class="note">Open the lecturer's link, or type the room code.</p>
-    </section>
+    <p class="note">בכיתה: צריך להיות מחובר ל־Wi‑Fi של האוניברסיטה ולסרוק את הברקוד החי שעל המסך.</p>
+  </section>
 
-    <section id="step-mode" class="card" hidden>
-      <h2>How are you joining?</h2>
-      <p class="note" id="mode-room"></p>
-      <button id="choose-class" type="button">I'm in class</button>
-      <button id="remote" class="warn" type="button">I'm remote</button>
-      <p id="mode-status" class="note" role="status"></p>
-      <p class="note">Remote is explicit and does not mark you present in class. In class asks for your name and email, then a separate check that this phone can reach the lecturer's verifier.</p>
-    </section>
+  <section id="step-scan" class="card" hidden>
+    <h2>3. סרוק את הברקוד החי</h2>
+    <p class="note">כוון את המצלמה לברקוד המרצד על המסך והחזק 2 שניות. צילום או תמונה לא יעבדו.</p>
+    <video id="video" playsinline muted hidden></video>
+    <div class="bar" style="margin:.6rem 0"><span id="scan-level" style="width:0"></span></div>
+    <p id="scan-state" class="note"></p>
+    <button id="scan-start" type="button">פתח מצלמה</button>
+  </section>
 
-    <section id="step-identity" class="card" dir="rtl" lang="he" hidden>
-      <h2>נוכחות בכיתה</h2>
-      <p class="note">בוחרים את השם מהרשימה. כתובת המייל נבדקת מול השרת ולא נשמרת במכשיר אחרי השליחה.</p>
-      <label for="roster-name">השם שלי</label>
-      <select id="roster-name"></select>
-      <label for="email">כתובת המייל</label>
-      <input id="email" type="email" autocomplete="email" inputmode="email">
-      <button id="identify" type="button">אישור במייל</button>
-      <p id="identity-status" class="note" role="status"></p>
-      <div id="screen-qr-panel" hidden>
-        <p class="note">כוונו את המצלמה לברקוד החי על מסך המרצה והחזיקו אותה עליו במשך שתי שניות. צילום מסך או תמונה קפואה לא יעברו. צריך לראות את הברקוד זז.</p>
-        <button id="scan-screen-qr" type="button">סריקת הברקוד החי</button>
-        <button id="stop-screen-qr" class="secondary" type="button" hidden>עצירת המצלמה</button>
-        <video id="screen-qr-scanner" class="preview" autoplay playsinline muted hidden></video>
-        <p id="screen-qr-progress" class="note" role="status"></p>
-      </div>
-      <button id="prove-network" type="button" hidden>אני על הרשת של המרצה</button>
-      <button id="roster-remote" class="warn" type="button" hidden>אני מרחוק, בלי סימון</button>
-      <p class="note">קודם מחזיקים את המצלמה על הברקוד החי שתי שניות, ואחר כך הכפתור פותח את המאמת המקומי בדפדפן. זו לא בקשת רשת נסתרת מהעמוד המאובטח. הסימון מגיע רק אחרי שניהם.</p>
-      <button id="sound-instead" class="secondary" type="button">קוד על המסך, בלי סימון ברשימה</button>
-    </section>
+  <section id="step-area" class="card" hidden>
+    <h2>4. באיזה אזור בכיתה אתה יושב?</h2>
+    <p class="note">הלוח/המרצה למעלה.</p>
+    <div id="zones" class="zones"></div>
+  </section>
 
-    <section id="step-class" class="card" hidden>
-      <h2>In class</h2>
-      <label for="name">Name</label>
-      <input id="name" autocomplete="name">
-      <label for="sid">Student id (optional)</label>
-      <input id="sid" autocomplete="off" placeholder="Leave empty, the server issues one">
-      <p class="note">Pick a seat on the map. The board is the front of the room. Then listen or enter the code on the lecturer's screen. The browser will ask for the microphone. High-frequency filters stay off.</p>
-      <div id="zones" class="seat-map" role="group" aria-label="Seat in the room">
-        <p class="board">Lecturer / board</p>
-      </div>
-      <div class="meter" aria-hidden="true"><span id="level"></span></div>
-      <p id="level-text" class="note">Microphone is off.</p>
-      <p id="tone-diagnostics" class="note"></p>
-      <button id="listen" type="button">Listen and check in</button>
-      <button id="stop" class="secondary" type="button">Stop listening</button>
-      <label for="code">On-screen code or scanned QR</label>
-      <input id="code" autocomplete="off" autocapitalize="characters">
-      <button id="typed" class="secondary" type="button">Check in with code</button>
-      <button id="scan" class="secondary" type="button">Scan the rotating QR</button>
-      <video id="scanner" class="preview" autoplay playsinline muted hidden></video>
-      <p id="check-result" class="note" role="status"></p>
-    </section>
+  <section id="step-wait" class="card" hidden>
+    <h2 id="wait-title">בבדיקה</h2>
+    <p id="wait-text" class="note"></p>
+    <div id="code-box" hidden>
+      <label for="code">קוד בן 6 ספרות מהמייל</label>
+      <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+      <button id="code-send" type="button" style="margin-top:.5rem">אשר</button>
+    </div>
+  </section>
 
-    <section id="step-lesson" hidden>
-      <section class="card">
-        <h2 id="lesson-title">Lesson</h2>
-        <p class="lesson-id"><span id="lesson-mode">In class</span> · <span id="attendance-id" class="mono">—</span></p>
-        <p id="lesson-alert" class="note" role="status"></p>
-        <p id="welcome" class="welcome" dir="rtl" lang="he" hidden></p>
-        <p id="remote-banner" class="note" dir="rtl" lang="he" hidden>הצטרפתם מרחוק. זה לא מסמן נוכחות בכיתה.</p>
-      </section>
-      <div class="learn-tabs" role="tablist">
-        <button type="button" class="secondary" data-learn="sources">מקורות</button>
-        <button type="button" class="secondary" data-learn="talk">שיחה</button>
-        <button type="button" class="secondary selected" data-learn="room">שיעור</button>
-      </div>
-      <div class="learn">
-      <section class="card learn-col" data-learn-panel="sources">
-        <h2>Sources</h2>
-        <p class="note">Lesson texts the lecturer pasted. Nothing here is sent to a model unless they turn that on.</p>
-        <div id="sources" class="note">No sources yet.</div>
-      </section>
-      <section class="card learn-col" data-learn-panel="talk">
-        <h2>Conversation</h2>
-        <p class="note" id="ask-mode">Answers are a search of the sources, not a model.</p>
-        <textarea id="ask-text" placeholder="Ask about the sources"></textarea>
-        <button id="ask-send" type="button">Ask</button>
-        <div id="ask-result" class="readout">No answer yet.</div>
-      </section>
-      <div data-learn-panel="room" class="selected">
-      <section class="card">
-        <h2>In the room</h2>
-        <div class="counts">
-          <div>
-            <p class="stat" id="count-in-class">0</p>
-            <p class="note">In class</p>
-          </div>
-          <div>
-            <p class="stat" id="count-remote">0</p>
-            <p class="note">Remote</p>
-          </div>
+  <section id="lesson" hidden>
+    <div class="card">
+      <div class="big-check">✓</div>
+      <h2 id="welcome" style="text-align:center"></h2>
+      <p id="where" class="note" style="text-align:center"></p>
+    </div>
+    <div class="card">
+      <h2>סקרים</h2>
+      <div id="polls" class="note">אין סקר פתוח.</div>
+    </div>
+    <div class="card">
+      <h2>הערה למרצה</h2>
+      <textarea id="note-text"></textarea>
+      <button id="note-send" type="button" style="margin-top:.4rem">שלח הערה</button>
+      <h2 style="margin-top:1rem">שאלה</h2>
+      <input id="q-text">
+      <button id="q-send" type="button" style="margin-top:.4rem">שאל</button>
+      <ul id="questions" class="plain"></ul>
+      <p id="lesson-state" class="note"></p>
+    </div>
+    <div class="card">
+      <h2>שיעורי בית</h2>
+      <ul id="homework" class="plain"><li class="note">אין עדיין.</li></ul>
+    </div>
+    <div class="card">
+      <h2>סיכום השיעור</h2>
+      <pre id="summary" class="summary">המרצה עוד לא פרסם סיכום.</pre>
+      <details>
+        <summary>אין סיכום? אפשר ליצור לעצמך עם מפתח API משלך (רשות)</summary>
+        <div class="row" style="margin-top:.4rem">
+          <select id="llm-provider" style="flex:1"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option><option value="xai">xAI</option></select>
+          <input id="llm-model" placeholder="מודל" style="flex:1">
         </div>
-      </section>
-      <section class="card">
-        <h2>Poll</h2>
-        <div id="poll" class="note">No polls yet</div>
-      </section>
-      <section class="card">
-        <h2>Questions</h2>
-        <p class="note">Ask the lecturer without interrupting. Everyone in the room can read these. Names are not shown.</p>
-        <div id="questions" class="question-list note">No questions yet.</div>
-        <label for="question">Your question</label>
-        <textarea id="question" placeholder="A question for the lecturer"></textarea>
-        <button id="send-question" type="button">Send</button>
-        <p id="question-result" class="note" role="status"></p>
-      </section>
-      <section class="card" id="summary-card" hidden>
-        <h2>Lesson summary</h2>
-        <div id="lesson-summary" class="readout">Summary not published yet</div>
-      </section>
-      </div>
-      </div>
-    </section>
-  </main>
-  <script src="/static/jsqr.js"></script>
-  <script src="/static/fsk.js"></script>
-  <script src="/static/student.js"></script>
+        <input id="llm-key" type="password" autocomplete="off" placeholder="מפתח API – לא נשמר" style="margin-top:.4rem">
+        <button id="my-summary" type="button" style="margin-top:.4rem">צור סיכום בשבילי</button>
+      </details>
+    </div>
+  </section>
+</main>
+
+<div id="repick" class="modal" hidden>
+  <div class="card">
+    <h2>שם כפול בכיתה</h2>
+    <p>עוד מכשיר בכיתה בחר את אותו השם. בחר שוב את השם האמיתי שלך.</p>
+    <select id="repick-name"></select>
+    <button id="repick-send" type="button" style="margin-top:.6rem">זה השם שלי</button>
+  </div>
+</div>
+<script src="/static/jsqr.js"></script>
+<script src="/static/student.js"></script>
 </body>
 </html>

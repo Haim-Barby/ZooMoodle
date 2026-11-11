@@ -1,10 +1,8 @@
 """Per-student lesson session keys.
 
-Check-in still uses the device ECDSA key and the room's rotating HMAC token.
-After that proof, the server issues a separate session secret. The phone sees
-the secret once. The server keeps only an HKDF-SHA256 verifier and uses it as
-the HMAC key for later requests. The room key from ``crypto_tokens`` is not
-reused here: its info string is ``zoomoodle-room-v1``.
+When a student joins, the server issues a session secret. The phone sees it
+once. The server keeps only an HKDF-SHA256 verifier and uses it as the HMAC
+key for every later request (method, path, body, timestamp, nonce).
 """
 
 from __future__ import annotations

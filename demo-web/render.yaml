@@ -38,7 +38,9 @@ services:
       # which the browser can forge, into the socket address. Loopback only.
       - key: FORWARDED_ALLOW_IPS
         value: "127.0.0.1"
-      # The app then sees Render's proxy as the peer and reads the rightmost
-      # untrusted X-Forwarded-For hop. Private ranges are that proxy, not the client.
+      # The app then sees Render's proxy as the peer and reads CF-Connecting-IP /
+      # True-Client-IP (set by Cloudflare). X-Forwarded-For is the fallback;
+      # private and Cloudflare hops are skipped. Private ranges are the Render
+      # proxy, not the client.
       - key: ZOOMODLE_TRUSTED_PROXIES
         value: 127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16

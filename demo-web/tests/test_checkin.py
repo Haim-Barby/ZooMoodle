@@ -115,9 +115,17 @@ def test_leftmost_forwarded_hop_from_the_browser_is_ignored():
     forged = {"x-forwarded-for": f"{CAMPUS_IP}, {HOME_IP}"}
     response = client.post(f"/api/rooms/{room_id}/join", json={"entry_id": eid, "mode": "in_class"}, headers=forged)
     assert response.status_code == 403
-    # CF-Connecting-IP is only trusted from the loopback cloudflared peer.
-    cf = client.post(f"/api/rooms/{room_id}/join", json={"entry_id": eid, "mode": "in_class"}, headers={"cf-connecting-ip": CAMPUS_IP, "x-forwarded-for": HOME_IP})
-    assert cf.status_code == 403
+    # Render's peer is 10.x; Cloudflare's client header is the student IP.
+    cf = client.post(
+        f"/api/rooms/{room_id}/join",
+        json={"entry_id": eid, "mode": "in_class"},
+        headers={
+            "cf-connecting-ip": CAMPUS_IP,
+            "true-client-ip": CAMPUS_IP,
+            "x-forwarded-for": f"{CAMPUS_IP}, 172.71.195.123, 10.226.90.65",
+        },
+    )
+    assert cf.status_code == 200
     # A body field cannot claim an address either.
     body = client.post(f"/api/rooms/{room_id}/join", json={"entry_id": eid, "mode": "in_class", "ip": CAMPUS_IP}, headers={"x-forwarded-for": HOME_IP})
     assert body.status_code == 403

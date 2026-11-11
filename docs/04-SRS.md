@@ -67,4 +67,4 @@ An optional ultrasonic FSK beacon and typed code remain in the demo. They are no
 
 ## 6. Traceability
 
-The [testing strategy](08-testing-strategy.md) maps requirement ids to classes and tests. Agent loop details remain in [the agent specification](09-ai-agent.md). Physical acceptance is recorded through the [demo checklist](10-demo-script.md).
+The [testing strategy](08-testing-strategy.md) maps requirement ids to classes and tests. Agent loop details are in the [design document](07-design.md). Physical acceptance is recorded through the [demo checklist](10-demo-script.md).

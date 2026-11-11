@@ -32,21 +32,28 @@
       <button id="choose-class" type="button">I'm in class</button>
       <button id="remote" class="warn" type="button">I'm remote</button>
       <p id="mode-status" class="note" role="status"></p>
-      <p class="note">Remote is explicit and does not mark you present in class. In class asks for your name and the last four digits, then a separate check that this phone can reach the lecturer's verifier.</p>
+      <p class="note">Remote is explicit and does not mark you present in class. In class asks for your name and email, then a separate check that this phone can reach the lecturer's verifier.</p>
     </section>
 
     <section id="step-identity" class="card" dir="rtl" lang="he" hidden>
       <h2>נוכחות בכיתה</h2>
-      <p class="note">בוחרים את השם מהרשימה. ארבע הספרות האחרונות נבדקות מול השרת ולא נשמרות במכשיר אחרי השליחה.</p>
+      <p class="note">בוחרים את השם מהרשימה. כתובת המייל נבדקת מול השרת ולא נשמרת במכשיר אחרי השליחה.</p>
       <label for="roster-name">השם שלי</label>
       <select id="roster-name"></select>
-      <label for="pin">4 ספרות אחרונות</label>
-      <input id="pin" inputmode="numeric" maxlength="4" autocomplete="off" type="password">
-      <button id="identify" type="button">בדיקת זהות</button>
+      <label for="email">כתובת המייל</label>
+      <input id="email" type="email" autocomplete="email" inputmode="email">
+      <button id="identify" type="button">אישור במייל</button>
       <p id="identity-status" class="note" role="status"></p>
+      <div id="screen-qr-panel" hidden>
+        <p class="note">כוונו את המצלמה לברקוד החי על מסך המרצה והחזיקו אותה עליו במשך שתי שניות. צילום מסך או תמונה קפואה לא יעברו. צריך לראות את הברקוד זז.</p>
+        <button id="scan-screen-qr" type="button">סריקת הברקוד החי</button>
+        <button id="stop-screen-qr" class="secondary" type="button" hidden>עצירת המצלמה</button>
+        <video id="screen-qr-scanner" class="preview" autoplay playsinline muted hidden></video>
+        <p id="screen-qr-progress" class="note" role="status"></p>
+      </div>
       <button id="prove-network" type="button" hidden>אני על הרשת של המרצה</button>
       <button id="roster-remote" class="warn" type="button" hidden>אני מרחוק, בלי סימון</button>
-      <p class="note">הכפתור פותח את המאמת המקומי בדפדפן. זו לא בקשת רשת נסתרת מהעמוד המאובטח. אם הרשת לא מגיעה למרצה, אין סימון נוכחות.</p>
+      <p class="note">קודם מחזיקים את המצלמה על הברקוד החי שתי שניות, ואחר כך הכפתור פותח את המאמת המקומי בדפדפן. זו לא בקשת רשת נסתרת מהעמוד המאובטח. הסימון מגיע רק אחרי שניהם.</p>
       <button id="sound-instead" class="secondary" type="button">קוד על המסך, בלי סימון ברשימה</button>
     </section>
 
@@ -134,6 +141,7 @@
       </div>
     </section>
   </main>
+  <script src="/static/jsqr.js"></script>
   <script src="/static/fsk.js"></script>
   <script src="/static/student.js"></script>
 </body>

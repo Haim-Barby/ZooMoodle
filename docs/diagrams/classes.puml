@@ -15,18 +15,27 @@ class KeyManager {
   derive_room_key(salt)
 }
 
-class TokenService {
-  issue()
-  verify()
+class RoomRoster {
+  import_csv()
+  verify_email()
 }
 
-class DeviceBinding {
-  observe(device, student, jwk)
+class ScreenQrService {
+  current_frame()
+  verify_sequence()
+}
+
+class NetworkRange {
+  contains(peer)
+}
+
+class PresenceHelper {
+  prove(challenge)
 }
 
 class AttendanceService {
-  open_challenge()
-  check_in()
+  identify()
+  finish()
 }
 
 class AnomalyDetector {
@@ -84,10 +93,13 @@ class HomeworkReviewService {
   review()
 }
 
-KeyManager --> Room : room key
-TokenService --> Room
-AttendanceService --> TokenService
-AttendanceService --> DeviceBinding
+KeyManager --> Room
+RoomRoster --> Room
+ScreenQrService --> Room
+AttendanceService --> RoomRoster
+AttendanceService --> ScreenQrService
+AttendanceService --> PresenceHelper
+PresenceHelper --> NetworkRange
 AttendanceService --> AnomalyDetector
 AttendanceService --> SeatZone
 Room --> Poll

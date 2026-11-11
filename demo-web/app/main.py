@@ -200,9 +200,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.settings.trusted_proxies,
         )
         try:
-            entry = room.roster.check_pin(
+            entry = room.roster.verify_email(
                 str(body.get("entry_id") or ""),
-                str(body.get("pin") or ""),
+                str(body.get("email") or ""),
                 ip,
                 str(body.get("attempt") or ""),
             )
@@ -221,6 +221,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "entry_id": entry.id,
             **issued,
             "presence": "ready" if challenge else "unavailable",
+            "qr_required": room.presence.qr_required,
+            **room.presence.screen_qr.public_params(),
         }
         if challenge is not None:
             payload["challenge_id"] = challenge.id
@@ -258,10 +260,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         room = _room(app, room_id)
         body = await _json(request)
         try:
-            url = room.presence.set_bind_url(str(body.get("url") or ""))
+            return room.presence.set_network(
+                str(body.get("network_name") or ""),
+                str(body.get("bind_host") or ""),
+                str(body.get("client_cidr") or ""),
+                body.get("bind_port") or 8787,
+            )
         except PresenceError as exc:
             raise StoreError(exc.reason, 400) from exc
-        return {"bind_url": url}
 
     @app.get("/api/rooms/{room_id}/presence")
     def presence_status(room_id: str, request: Request):
@@ -291,7 +297,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.headers.get("x-zoomoodle-timestamp", ""),
             )
         except PresenceError as exc:
-            status = 401 if exc.reason in {"bad_helper", "session_expired", "session_replay"} else 409
+            if exc.reason in {"bad_helper", "session_expired", "session_replay"}:
+                status = 401
+            elif exc.reason in {"wrong_interface", "peer_out_of_range"}:
+                status = 403
+            elif exc.reason in {"missing_network", "bad_network", "bind_outside_range", "range_too_wide", "public_range"}:
+                status = 400
+            else:
+                status = 409
             raise StoreError(exc.reason, status) from exc
         return {"ok": True}
 
@@ -309,6 +322,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         display = entry.display if entry else ""
         room.attendance.mark_hotspot(session.student_id, display, room.attendance.tokens.now())
         return {"ok": True, "in_class": True, "display": display}
+
+    @app.post("/api/rooms/{room_id}/presence/screen-qr/settings")
+    async def set_screen_qr_settings(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        body = await _json(request)
+        if "required" not in body:
+            raise StoreError("bad_qr_setting", 400)
+        return room.presence.set_qr_required(bool(body.get("required")))
+
+    @app.get("/api/rooms/{room_id}/presence/screen-qr")
+    def current_screen_qr(room_id: str, request: Request):
+        _require_lecturer(request)
+        room = _room(app, room_id)
+        if room.closed:
+            raise StoreError("room_closed", 409)
+        frame = room.presence.screen_qr.issue(room.key, room.id)
+        return {
+            "code": frame.code,
+            "slot": frame.slot,
+            "issued_at": frame.issued_at,
+            "expires_in": round(frame.expires_in, 3),
+            "flicker_seed": room.presence.screen_qr.flicker_seed(room.key, room.id),
+            "qr_required": room.presence.qr_required,
+            **room.presence.screen_qr.public_params(),
+        }
+
+    @app.post("/api/rooms/{room_id}/presence/screen-qr")
+    async def submit_screen_qr(room_id: str, request: Request):
+        raw = await request.body()
+        room = _open_room(app, room_id)
+        session = _require_session(request, room, raw, write=True)
+        body = _body_dict(raw)
+        try:
+            room.presence.accept_screen_qr(
+                room.id,
+                session.student_id,
+                session.id,
+                body.get("codes"),
+                room.key,
+            )
+        except PresenceError as exc:
+            status = 401 if exc.reason == "qr_mismatch" else 409
+            raise StoreError(exc.reason, status) from exc
+        entry = room.roster.entries.get(session.student_id)
+        network_ready = any(
+            challenge.room_id == room.id
+            and challenge.entry_id == session.student_id
+            and challenge.session_id == session.id
+            and challenge.observed
+            and not challenge.used
+            for challenge in room.presence.challenges.values()
+        )
+        return {
+            "ok": True,
+            "qr": "ready",
+            "network": "ready" if network_ready else "pending",
+            "in_class": False,
+            "display": entry.display if entry else "",
+        }
 
     @app.post("/api/rooms/{room_id}/sources")
     async def create_source(room_id: str, request: Request):

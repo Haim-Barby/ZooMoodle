@@ -125,7 +125,7 @@ Confidentiality</textarea>
         </article>
         <article class="card">
           <h2>Roster</h2>
-          <p class="note">Upload the class CSV. Only names are kept, plus a server-side check of the last four digits. Email and the full id are discarded. Blank groups stay out until you choose them.</p>
+          <p class="note">Upload the class CSV. Names and a server-side email check are kept. The email itself is stored only as a salted HMAC, and a national id column, if present, is ignored. Blank groups stay out until you choose them.</p>
           <input id="roster-file" type="file" accept=".csv,text/csv">
           <button id="upload-roster" type="button">Import roster</button>
           <p id="roster-status" class="note" role="status"></p>
@@ -136,19 +136,45 @@ Confidentiality</textarea>
         </article>
         <article class="card">
           <h2>Hotspot presence</h2>
-          <p class="note">The checkmark needs the name check and a phone that opened the local verifier. A claimed network name is not enough. One QR cannot both join Wi-Fi and open this app.</p>
+          <p class="note">The checkmark needs the name, the email confirmation, the live barcode, and a phone that opened the local verifier. A claimed network name is not enough. One QR cannot both join Wi-Fi and open this app.</p>
           <div class="row">
             <button id="pair-helper" type="button">Pair helper</button>
             <button id="revoke-helper" class="secondary" type="button">Revoke helper</button>
           </div>
           <p id="helper-status" class="note" role="status">Helper key is shown once in the box below and is not saved in this page.</p>
           <input id="helper-key" type="password" readonly autocomplete="off" placeholder="Key appears here once">
-          <label for="bind-url">Verifier address on the hotspot</label>
-          <input id="bind-url" placeholder="http://192.168.137.1:8787" autocomplete="off">
-          <button id="save-bind" class="secondary" type="button">Save verifier address</button>
+          <label for="network-name">Network name</label>
+          <input id="network-name" autocomplete="off" placeholder="Label for the Wi-Fi QR only">
+          <label for="bind-host">Verifier address on that network</label>
+          <input id="bind-host" autocomplete="off" placeholder="192.168.137.1 or 192.168.2.1">
+          <label for="bind-port">Verifier port</label>
+          <input id="bind-port" inputmode="numeric" value="8787">
+          <label for="client-cidr">Addresses the hotspot gives phones</label>
+          <input id="client-cidr" autocomplete="off" placeholder="192.168.137.0/24 or 192.168.2.0/24">
+          <button id="save-bind" class="secondary" type="button">Save network check</button>
+          <p id="network-diagnostics" class="note" role="status"></p>
+          <p class="note">Windows Mobile Hotspot is often 192.168.137.1 and 192.168.137.0/24. macOS Internet Sharing is often 192.168.2.1 and 192.168.2.0/24. A missing or wider range is rejected.</p>
+
+          <h2>ברקוד רץ</h2>
+          <p class="note">על המסך מוצג ברקוד חי שמרצד ומשתנה כל הזמן, כמו סרטון. הסטודנט מחזיק את המצלמה עליו במשך שתי שניות. השרת בודק גם את הקודים שנסרקו וגם שהתמונה באמת זזה, לפי השעה שלו ולא לפי השעה בטלפון. צילום מסך סטטי נדחה. הסימון מגיע רק אחרי הברקוד ואחרי בדיקת הרשת.</p>
+          <label class="row" for="screen-qr-toggle">
+            <input id="screen-qr-toggle" type="checkbox" checked style="width:auto">
+            <span>דורשים ברקוד רץ בנוסף לבדיקת הרשת</span>
+          </label>
+          <button id="save-screen-qr" class="secondary" type="button">Save rotating QR setting</button>
+          <p id="screen-qr-status" class="note" role="status"></p>
+          <div id="screen-qr-stage" class="screen-qr-stage">
+            <div id="screen-qr-frame" class="screen-qr-frame">
+              <canvas id="screen-qr-flicker" class="screen-qr-flicker" aria-hidden="true"></canvas>
+              <div id="screen-qr" class="qr screen-qr" aria-label="Flickering attendance barcode"></div>
+            </div>
+            <div class="screen-qr-meter" aria-hidden="true"><span id="screen-qr-level"></span></div>
+            <p id="screen-qr-code" class="code">—</p>
+            <p id="screen-qr-meta" class="note">Open a room to start the flickering barcode.</p>
+          </div>
           <h2>Step 1 — Wi-Fi only</h2>
-          <p class="note">The phone asks the operating system before joining. This QR is drawn here and is not sent to the server.</p>
-          <label for="wifi-ssid">Network name</label>
+          <p class="note">The phone asks the operating system before joining. The password is drawn into the QR on this page and is not sent to the server. The name is not proof that a phone joined.</p>
+          <label for="wifi-ssid">Network name on the QR</label>
           <input id="wifi-ssid" autocomplete="off">
           <label for="wifi-password">Network password</label>
           <input id="wifi-password" type="password" autocomplete="off">

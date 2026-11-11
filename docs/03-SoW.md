@@ -1,47 +1,46 @@
 # Statement of work
 
-ZooMoodle, Introduction to Software Engineering, Exercise 2. Individual project.
+ZooMoodle, Introduction to Software Engineering, Exercise 2. Individual project. Deadline: 25 November 2026.
 
 ## Objective and scope
 
-Deliver an implementable design and a ten-minute classroom demo of a teaching tool. Attendance is the priority; students use a phone web page and the lecturer uses a laptop.
+Deliver an implementable design and a ten-minute classroom demo of a teaching tool. Attendance is the priority. Students use a phone web page; the lecturer uses a laptop.
 
-The demo covers lesson rooms, acoustic or typed-code attendance, device signatures and anomaly flags, separate remote attendance, seat zones, CSV/XLSX export, comments, polls, transcript import, and lesson/homework agents. Model configuration and a connection test support the agents. Full requirements are in the [SRS](04-SRS.md); the [README](../README.md) maps deliverables 1–11 to their files.
+The demo covers lesson rooms, combined in-class attendance (imported roster and email confirmation, a two-second live flickering barcode, and a local network verifier), a roster checkmark and welcome, separate remote attendance, seat zones, CSV/XLSX export, comments, polls, transcript import, and lesson/homework agents. Model configuration and a connection test support the agents. Full requirements are in the [SRS](04-SRS.md). The [README](../README.md) maps deliverables 1–11 to their files.
 
-The attention extension uses labeled sample aggregates only. Native apps, university accounts, a durable database, live camera processing, and integrations with university systems are outside this demo. Converting recordings to transcripts is an external prerequisite.
+An older ultrasonic FSK path remains in the UI as an optional tab and is not required for the checkmark. The attention extension uses labeled sample aggregates only. Native apps, university accounts, a durable database, live camera processing, and integrations with university systems are outside this demo. Converting recordings to transcripts is an external prerequisite.
 
 ## Work sequence and status
 
-No calendar deadlines have been assigned.
-
-1. Define the problem, scope, and tool choices — written; VM experiments recorded.
+1. Define the problem, scope, and tool choices — written; VM and Mac tests recorded.
 2. Specify requirements, use cases, components, classes, sequences, and testing — documents and diagrams present.
-3. Compose the demo and run automated tests — implemented; known implementation gaps remain in [conclusions](11-conclusions.md).
-4. Validate real phones, campus networking, HTTPS, and a live model — pending.
+3. Compose the demo and run automated tests — implemented; 103 tests passed on the owner's Mac.
+4. Validate a real phone camera, a real hotspot, HTTPS from a phone, and a live model — pending.
 5. Give the classroom demo and complete the final results — pending.
 
 ## Assumptions
 
-- A single laptop process holds lesson data in memory. Restarting clears rooms regardless of whether the master secret is stable.
-- Phones access the same application through an HTTPS tunnel. The lecturer uses the HTTPS origin when sharing generated links.
-- Broadcast tokens are single-use **per device**, so the same signal can admit the whole class.
-- The configured Ariel subnets are a supporting signal; the acoustic path and the campus tunnel still need validation.
-- A lecturer-supplied model configuration is required for the agents; tests use scripted responses. Known names and ids are redacted on the agent path, with limits described in the SRS.
+- A single process holds lesson data in memory. Restarting clears rooms.
+- Phones reach the app through an HTTPS origin (tunnel or Render). The local verifier runs on the lecturer laptop, on the hotspot, not through that origin.
+- Barcode freshness uses the server clock. A live video relay from a classmate may pass liveness; the network check is what requires the lecturer's network.
+- Launchers start a saved helper setup. They do not fully turn on Internet Sharing or Mobile Hotspot.
+- A lecturer-supplied model is required for the agents. Tests use scripted responses. Known names are redacted on the agent path, with limits in the SRS.
 
 ## Principal risks
 
 | Risk | Response and remaining limit |
 | --- | --- |
-| Speakers or phone mics drop 18–19 kHz | Typed-code fallback; test on real phones before claiming automatic attendance. |
-| A code or signal is relayed | Short lifetime, device signatures, and flags. Fast sharing can still succeed; see the SRS threat model. |
-| Tunnel or subnet check fails on campus | Test the HTTPS origin and forwarded IP on campus; subnet is a confidence flag, not an admission gate. |
-| Model is unavailable or gives an invalid report | Connection test, read-only tools, report validation, and a bounded loop; return an error rather than a substitute report. |
-| Process stops | Export attendance before shutdown; the demo does not provide recovery or persistence. |
+| Phone camera or HTTPS blocks the barcode scan | Requires a secure origin; untested on real phones. A still photo must not pass. |
+| Hotspot setup is manual, especially on a Mac | Documented steps and launchers; a failed helper means no checkmark. |
+| A classmate live-streams the lecturer screen | Liveness may pass; the local range check covers a student off the network. Relay from a phone already on the hotspot remains possible. |
+| Model unavailable or invalid | Connection test, read-only tools, report validation; return an error, not a substitute report. |
+| Process stops | Export attendance before shutdown; the demo has no recovery. |
 
 ## Acceptance
 
-- Lecturer authentication gates room creation, current codes, attendance, exports, configuration, and lecturer AI actions.
-- A student can select a zone, check in, answer a poll, comment, and submit homework. Current codes work for multiple devices; reuse on one device fails. Anomalies remain visible.
-- CSV and XLSX contain identity, mode, zone, time, confidence, flags, subnet, and device id.
-- Without model configuration, AI routes return a configuration error. With a tool-calling provider, the agents must read data before returning a validated report; homework reviews require `not_a_grade: true`.
-- Completion requires recorded classroom and live-model results, not just written plans. Use the [demo script](10-demo-script.md) and fill the results tables.
+- Lecturer authentication gates room creation, roster and presence settings, attendance, exports, configuration, and lecturer AI actions.
+- A student can pick a name from the imported list, confirm with that email, complete a two-second live barcode capture, reach the local verifier, and then receive a checkmark and welcome. A still photo, a short capture, a stale or reused code, or a peer outside the configured range does not mark the roster.
+- Remote attendance stays a separate row, without a roster checkmark.
+- CSV and XLSX are lecturer-only and do not include a national id or the raw email.
+- Without model configuration, AI routes return a configuration error. With a tool-calling provider, agents must read data before a validated report; homework reviews require `not_a_grade: true`.
+- Completion requires recorded classroom and live-model results, not just written plans. Use the [demo script](10-demo-script.md) and fill the results table in the tools report.

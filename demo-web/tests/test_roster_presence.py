@@ -1,4 +1,4 @@
-"""Roster import, last-four check, and hotspot presence proof."""
+"""Roster import, email confirmation, and hotspot presence proof."""
 
 import io
 import json
@@ -49,7 +49,12 @@ def _arm(client, room_id, group="3"):
     bound = client.post(
         f"/api/rooms/{room_id}/presence/bind",
         headers=_auth(),
-        json={"url": "http://192.168.137.1:8787"},
+        json={
+            "network_name": "ClassLab",
+            "bind_host": "192.168.137.1",
+            "bind_port": 8787,
+            "client_cidr": "192.168.137.0/24",
+        },
     )
     assert bound.status_code == 200
     return paired.json()
@@ -69,7 +74,10 @@ def _observe(client, room_id, helper, challenge_id, when=None):
     from app.session_keys import canonical_message, decode_secret
 
     path = f"/api/rooms/{room_id}/presence/observe"
-    raw = json.dumps({"challenge_id": challenge_id}, separators=(",", ":")).encode("utf-8")
+    raw = json.dumps(
+        {"challenge_id": challenge_id, "local": "192.168.137.1", "peer": "192.168.137.40", "ssid": "not-used"},
+        separators=(",", ":"),
+    ).encode("utf-8")
     stamp = str(int(time.time() if when is None else when))
     nonce = secrets.token_hex(16)
     message = canonical_message("POST", path, raw, stamp, nonce)
@@ -84,6 +92,40 @@ def _observe(client, room_id, helper, challenge_id, when=None):
             "x-zoomoodle-nonce": nonce,
             "x-zoomoodle-signature": signature,
         },
+    )
+
+
+
+def _qr_codes(application, room_id, start_slot=None, count=None):
+    room = application.state.store.get(room_id)
+    qr = room.presence.screen_qr
+    now = room.presence.now()
+    if count is None:
+        count = qr.slot_span
+    if start_slot is None:
+        current = qr.slot_for(now)
+        start_slot = current - count + 1
+        # A full 2s live hold must still be fresh at receipt. Mid-slot,
+        # pin the clock to the start of the current slot so the oldest
+        # frame in the batch is a deterministic age.
+        first_age = now - start_slot * qr.frame_seconds
+        if first_age > qr.max_age_seconds:
+            aligned = current * qr.frame_seconds
+            room.presence._clock = lambda t=aligned: t
+            now = aligned
+    return [
+        qr.issue_at(room.key, room.id, start_slot + index, now=now).code
+        for index in range(count)
+    ]
+
+
+def _submit_qr(client, creds, room_id, codes):
+    return signed_request(
+        client,
+        creds,
+        "POST",
+        f"/api/rooms/{room_id}/presence/screen-qr",
+        {"codes": codes},
     )
 
 
@@ -114,6 +156,9 @@ def test_csv_handles_hebrew_whitespace_duplicates_and_drops_secrets(capsys):
     assert "123456789" not in stored
     assert "dana@example.test" not in stored
     assert all(len(entry.verifier) == 32 for entry in room.roster.entries.values())
+    lecturer_sheet = client.get(f"/api/rooms/{room_id}/roster", headers=_auth()).text
+    assert "dana@example.test" not in lecturer_sheet
+    assert "email" not in lecturer_sheet
 
 
 def test_blank_group_is_not_selected_until_the_lecturer_says_so():
@@ -148,7 +193,7 @@ def test_blank_group_is_not_selected_until_the_lecturer_says_so():
     assert refused.status_code == 400
 
 
-def test_pin_lock_and_name_list_hide_the_secret():
+def test_email_lock_and_name_list_hide_the_secret():
     _application, client = _client()
     room_id = _room(client)
     _arm(client, room_id)
@@ -157,21 +202,25 @@ def test_pin_lock_and_name_list_hide_the_secret():
     text = client.get(f"/api/rooms/{room_id}/roster/names").text
     assert "6789" not in text
     assert "123456789" not in text
+    assert "dana@example.test" not in text
+    assert "yosi@example.test" not in text
     wrong = client.post(
         f"/api/rooms/{room_id}/roster/identify",
-        json={"entry_id": dana["id"], "pin": "0000", "attempt": "browser-a"},
+        json={"entry_id": dana["id"], "email": "wrong@example.test", "attempt": "browser-a"},
     )
     assert wrong.status_code == 401
     assert wrong.json()["error"] == "identity_rejected"
     assert "6789" not in wrong.text
+    assert "dana@example.test" not in wrong.text
+    assert "wrong@example.test" not in wrong.text
     for _ in range(4):
         client.post(
             f"/api/rooms/{room_id}/roster/identify",
-            json={"entry_id": dana["id"], "pin": "0000", "attempt": "browser-a"},
+            json={"entry_id": dana["id"], "email": "wrong@example.test", "attempt": "browser-a"},
         )
     limited = client.post(
         f"/api/rooms/{room_id}/roster/identify",
-        json={"entry_id": dana["id"], "pin": "6789", "attempt": "browser-a"},
+        json={"entry_id": dana["id"], "email": "dana@example.test", "attempt": "browser-a"},
     )
     assert limited.status_code == 429
     assert limited.json()["error"] == "identity_limited"
@@ -179,11 +228,13 @@ def test_pin_lock_and_name_list_hide_the_secret():
     # A different person is not locked by Dana's failures.
     ok = client.post(
         f"/api/rooms/{room_id}/roster/identify",
-        json={"entry_id": other["id"], "pin": "4321", "attempt": "browser-b"},
+        json={"entry_id": other["id"], "email": "yosi@example.test", "attempt": "browser-b"},
     )
     assert ok.status_code == 200
     assert ok.json()["display"] == "יוסי כהן"
     assert "session_key" in ok.json()
+    assert "yosi@example.test" not in ok.text
+    assert "email" not in ok.json()
     roster = client.get(f"/api/rooms/{room_id}/roster", headers=_auth()).json()
     yosi = next(row for row in roster["entries"] if row["display"] == "יוסי כהן")
     assert yosi["in_class"] is False
@@ -201,7 +252,7 @@ def test_presence_requires_helper_and_rejects_fake_replay_and_cross_use():
     dana = next(item for item in _names(client, room_id) if item["display"] == "דנה לוי")
     identified = client.post(
         f"/api/rooms/{room_id}/roster/identify",
-        json={"entry_id": dana["id"], "pin": "6789", "attempt": "phone"},
+        json={"entry_id": dana["id"], "email": "dana@example.test", "attempt": "phone"},
     ).json()
     claim = signed_request(
         client,
@@ -226,7 +277,7 @@ def test_presence_requires_helper_and_rejects_fake_replay_and_cross_use():
     other = next(item for item in _names(client, room_id) if item["display"] == "יוסי כהן")
     yosi = client.post(
         f"/api/rooms/{room_id}/roster/identify",
-        json={"entry_id": other["id"], "pin": "4321", "attempt": "other"},
+        json={"entry_id": other["id"], "email": "yosi@example.test", "attempt": "other"},
     ).json()
     crossed = signed_request(
         client,
@@ -238,6 +289,10 @@ def test_presence_requires_helper_and_rejects_fake_replay_and_cross_use():
     assert crossed.status_code == 409
     assert crossed.json()["error"] == "presence_mismatch"
 
+    accepted = _submit_qr(client, identified, room_id, _qr_codes(application, room_id))
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["qr"] == "ready"
+    assert accepted.json()["in_class"] is False
     done = signed_request(
         client,
         identified,
@@ -268,6 +323,7 @@ def test_presence_requires_helper_and_rejects_fake_replay_and_cross_use():
     exported = client.get(f"/api/rooms/{room_id}/export.csv", headers=_auth())
     assert "123456789" not in exported.text
     assert "6789" not in exported.text
+    assert "dana@example.test" not in exported.text
     assert helper["helper_key"] not in exported.text
 
 
@@ -279,7 +335,7 @@ def test_stale_cross_room_revoke_close_and_remote_are_separate():
     dana = next(item for item in _names(client, room_id) if item["display"] == "דנה לוי")
     identified = client.post(
         f"/api/rooms/{room_id}/roster/identify",
-        json={"entry_id": dana["id"], "pin": "6789", "attempt": "phone"},
+        json={"entry_id": dana["id"], "email": "dana@example.test", "attempt": "phone"},
     ).json()
     book = application.state.store.get(room_id).presence
     start = book.now()
@@ -291,7 +347,7 @@ def test_stale_cross_room_revoke_close_and_remote_are_separate():
 
     fresh = client.post(
         f"/api/rooms/{room_id}/roster/identify",
-        json={"entry_id": dana["id"], "pin": "6789", "attempt": "phone-2"},
+        json={"entry_id": dana["id"], "email": "dana@example.test", "attempt": "phone-2"},
     ).json()
     leaked = _observe(client, other_room, helper, fresh["challenge_id"])
     assert leaked.status_code == 401
@@ -305,11 +361,16 @@ def test_stale_cross_room_revoke_close_and_remote_are_separate():
     client.post(
         f"/api/rooms/{room_id}/presence/bind",
         headers=_auth(),
-        json={"url": "http://192.168.137.1:8787"},
+        json={
+            "network_name": "ClassLab",
+            "bind_host": "192.168.137.1",
+            "bind_port": 8787,
+            "client_cidr": "192.168.137.0/24",
+        },
     )
     again = client.post(
         f"/api/rooms/{room_id}/roster/identify",
-        json={"entry_id": dana["id"], "pin": "6789", "attempt": "phone-3"},
+        json={"entry_id": dana["id"], "email": "dana@example.test", "attempt": "phone-3"},
     ).json()
     assert _observe(client, room_id, helper, again["challenge_id"]).status_code == 200
     client.post(f"/api/rooms/{room_id}/close", headers=_auth())
@@ -328,7 +389,7 @@ def test_stale_cross_room_revoke_close_and_remote_are_separate():
     person = next(item for item in _names(client, room_two) if item["display"] == "דנה לוי")
     remote = client.post(
         f"/api/rooms/{room_two}/roster/identify",
-        json={"entry_id": person["id"], "pin": "6789", "attempt": "remote"},
+        json={"entry_id": person["id"], "email": "dana@example.test", "attempt": "remote"},
     ).json()
     marked = signed_request(client, remote, "POST", f"/api/rooms/{room_two}/roster/remote", {})
     assert marked.status_code == 200
@@ -362,8 +423,9 @@ def test_helper_rejects_the_wrong_interface_and_hotspot_changes_nothing():
         "helper",
         encode_secret(b"\x11" * 32),
         "https://class.example",
+        client_cidr="192.168.137.0/24",
     )
-    status, _location = helper.prove("c" * 32, ("10.0.0.5", 8787))
+    status, _location = helper.prove("c" * 32, ("10.0.0.5", 8787), ("192.168.137.40", 50000))
     assert status == 403
     assert helper.observations == 0
     try:
@@ -421,3 +483,254 @@ def test_source_search_does_not_call_a_model_or_send_the_roster():
     assert modeled.status_code == 200
     assert modeled.json()["mode"] == "model"
     assert calls["n"] == 1
+
+
+def test_network_config_rejects_wide_or_public_ranges_and_round_trips():
+    _application, client = _client()
+    room_id = _room(client)
+    cases = [
+        ("192.168.137.1", "192.168.0.0/16", "range_too_wide"),
+        ("10.1.2.1", "10.0.0.0/8", "range_too_wide"),
+        ("192.168.137.1", "0.0.0.0/0", "range_too_wide"),
+        ("8.8.8.8", "8.8.8.0/24", "public_range"),
+        ("2001:db8::1", "2001:db8::/64", "public_range"),
+    ]
+    for host, cidr, reason in cases:
+        rejected = client.post(
+            f"/api/rooms/{room_id}/presence/bind",
+            headers=_auth(),
+            json={"network_name": "ClassLab", "bind_host": host, "client_cidr": cidr},
+        )
+        assert rejected.status_code == 400, (host, cidr, rejected.text)
+        assert rejected.json()["error"] == reason
+    outside = client.post(
+        f"/api/rooms/{room_id}/presence/bind",
+        headers=_auth(),
+        json={"network_name": "ClassLab", "bind_host": "10.1.2.1", "client_cidr": "192.168.137.0/24"},
+    )
+    assert outside.status_code == 400
+    assert outside.json()["error"] == "bind_outside_range"
+    saved = client.post(
+        f"/api/rooms/{room_id}/presence/bind",
+        headers=_auth(),
+        json={
+            "network_name": "ClassLab",
+            "bind_host": "192.168.2.1",
+            "bind_port": 8787,
+            "client_cidr": "192.168.2.0/24",
+        },
+    )
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["bind_host"] == "192.168.2.1"
+    assert body["client_cidr"] == "192.168.2.0/24"
+    assert body["network_name"] == "ClassLab"
+    assert body["bind_url"] == "http://192.168.2.1:8787"
+    assert "not every private address" in " ".join(body["diagnostics"])
+    again = client.get(f"/api/rooms/{room_id}/presence", headers=_auth()).json()
+    assert again["client_cidr"] == "192.168.2.0/24"
+    assert again["network_name"] == "ClassLab"
+    missing = client.post(
+        f"/api/rooms/{room_id}/roster/identify",
+        json={"entry_id": "none", "email": "wrong@example.test", "attempt": "x"},
+    )
+    # No group selected, so identity fails closed before presence. Configure the group and omit the range.
+    _import(client, room_id)
+    client.post(f"/api/rooms/{room_id}/roster/group", headers=_auth(), json={"group": "3"})
+    client.post(f"/api/rooms/{room_id}/presence/pair", headers=_auth())
+    # Saving a range then clearing is not supported; a room with no successful save stays unavailable.
+    fresh = _room(client)
+    _import(client, fresh)
+    client.post(f"/api/rooms/{fresh}/roster/group", headers=_auth(), json={"group": "3"})
+    client.post(f"/api/rooms/{fresh}/presence/pair", headers=_auth())
+    dana = next(item for item in _names(client, fresh) if item["display"] == "דנה לוי")
+    identified = client.post(
+        f"/api/rooms/{fresh}/roster/identify",
+        json={"entry_id": dana["id"], "email": "dana@example.test", "attempt": "noreange"},
+    ).json()
+    assert identified["presence"] == "unavailable"
+    assert "challenge_id" not in identified
+
+
+def test_forwarded_header_cannot_bypass_the_configured_range():
+    _application, client = _client()
+    room_id = _room(client)
+    helper = _arm(client, room_id)
+    dana = next(item for item in _names(client, room_id) if item["display"] == "דנה לוי")
+    identified = client.post(
+        f"/api/rooms/{room_id}/roster/identify",
+        json={"entry_id": dana["id"], "email": "dana@example.test", "attempt": "hdr"},
+    ).json()
+    outside = _observe_peer(client, room_id, helper, identified["challenge_id"], "8.8.8.8", forwarded="192.168.137.40")
+    assert outside.status_code == 403
+    assert outside.json()["error"] == "peer_out_of_range"
+    other_lan = _observe_peer(client, room_id, helper, identified["challenge_id"], "192.168.1.20", forwarded="192.168.137.40")
+    assert other_lan.status_code == 403
+    wrong_nic = _observe_peer(
+        client, room_id, helper, identified["challenge_id"], "192.168.137.40", local="10.1.1.1", forwarded="192.168.137.40"
+    )
+    assert wrong_nic.status_code == 403
+    assert wrong_nic.json()["error"] == "wrong_interface"
+    accepted = _observe_peer(
+        client, room_id, helper, identified["challenge_id"], "192.168.137.40", forwarded="8.8.8.8"
+    )
+    assert accepted.status_code == 200, accepted.text
+    sheet = client.get(f"/api/rooms/{room_id}/roster", headers=_auth()).json()
+    row = next(item for item in sheet["entries"] if item["id"] == dana["id"])
+    assert row["in_class"] is False
+
+
+def _observe_peer(client, room_id, helper, challenge_id, peer, local="192.168.137.1", forwarded=""):
+    import secrets
+    import time
+
+    from app.presence import sign_helper
+    from app.session_keys import canonical_message, decode_secret
+
+    path = f"/api/rooms/{room_id}/presence/observe"
+    raw = json.dumps(
+        {"challenge_id": challenge_id, "local": local, "peer": peer, "ssid": "SpoofedLab", "ip": forwarded},
+        separators=(",", ":"),
+    ).encode()
+    stamp = str(int(time.time()))
+    nonce = secrets.token_hex(16)
+    signature = sign_helper(decode_secret(helper["helper_key"]), canonical_message("POST", path, raw, stamp, nonce))
+    return client.post(
+        path,
+        content=raw,
+        headers={
+            "content-type": "application/json",
+            "x-zoomoodle-session": helper["helper_id"],
+            "x-zoomoodle-timestamp": stamp,
+            "x-zoomoodle-nonce": nonce,
+            "x-zoomoodle-signature": signature,
+            "x-forwarded-for": forwarded or "203.0.113.50",
+        },
+    )
+
+
+def test_real_socket_peer_and_interface_are_what_the_helper_checks():
+    import threading
+    from http.client import HTTPConnection
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from app.session_keys import encode_secret
+    from helper.presence_helper import PresenceHelper, serve
+
+    seen = []
+
+    class Sink(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("content-length") or 0)
+            seen.append(self.rfile.read(length).decode())
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args):
+            return
+
+    sink = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
+    threading.Thread(target=sink.serve_forever, daemon=True).start()
+    sink_url = f"http://127.0.0.1:{sink.server_address[1]}"
+    key = encode_secret(b"\x44" * 32)
+
+    inside = PresenceHelper("127.0.0.1", sink_url, "room", "hid", key, "http://127.0.0.1:9", client_cidr="127.0.0.1/32")
+    inside_server = serve(inside, 0)
+    threading.Thread(target=inside_server.serve_forever, daemon=True).start()
+    connection = HTTPConnection("127.0.0.1", inside_server.server_address[1], timeout=3)
+    connection.request("GET", "/prove?c=" + ("ab" * 16), headers={"X-Forwarded-For": "8.8.8.8", "X-Real-IP": "192.168.137.50"})
+    response = connection.getresponse()
+    assert response.status == 302
+    assert inside.observations == 1
+    assert '"peer":"127.0.0.1"' in seen[-1]
+    assert '"local":"127.0.0.1"' in seen[-1]
+    assert "8.8.8.8" not in seen[-1]
+
+    import ipaddress
+    import socket
+
+    def _can_bind(host):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind((host, 0))
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
+
+    # Linux usually allows 127.0.0.2. macOS only has 127.0.0.1, so bind the
+    # helper there and narrow the accepted peer range after construction.
+    # prove() still sees the real socket peer, not X-Forwarded-For.
+    if _can_bind("127.0.0.2"):
+        outside = PresenceHelper("127.0.0.2", sink_url, "room", "hid", key, "http://127.0.0.1:9", client_cidr="127.0.0.2/32")
+        foreign_host = "127.0.0.2"
+    else:
+        outside = PresenceHelper("127.0.0.1", sink_url, "room", "hid", key, "http://127.0.0.1:9", client_cidr="127.0.0.1/32")
+        outside.client_network = ipaddress.ip_network("127.0.0.2/32")
+        foreign_host = "127.0.0.1"
+    outside_server = serve(outside, 0)
+    threading.Thread(target=outside_server.serve_forever, daemon=True).start()
+    before = len(seen)
+    foreign = HTTPConnection(foreign_host, outside_server.server_address[1], timeout=3)
+    foreign.request("GET", "/prove?c=" + ("cd" * 16), headers={"X-Forwarded-For": "127.0.0.2"})
+    denied = foreign.getresponse()
+    assert denied.status == 403
+    assert outside.observations == 0
+    assert len(seen) == before
+    sink.shutdown()
+    inside_server.shutdown()
+    outside_server.shutdown()
+
+def test_english_headers_are_accepted_and_id_column_is_ignored():
+    _application, client = _client()
+    room_id = _room(client)
+    csv_text = "\n".join(
+        [
+            "First name,Last name,Student ID,Email,Group",
+            "Dana,Lee,999999999,Dana.Lee@Example.TEST,3",
+            "No Mail,Student,111,not-an-email,3",
+        ]
+    )
+    imported = _import(client, room_id, csv_text)
+    assert imported["imported"] == 1
+    assert imported["skipped"] == 1
+    assert imported["groups"]["3"] == 1
+    blob = json.dumps(imported)
+    assert "999999999" not in blob
+    assert "Dana.Lee@Example.TEST" not in blob
+    client.post(f"/api/rooms/{room_id}/roster/group", headers=_auth(), json={"group": "3"})
+    names = _names(client, room_id)
+    assert names[0]["display"] == "Dana Lee"
+    listed = client.get(f"/api/rooms/{room_id}/roster/names").text
+    assert "dana.lee@example.test" not in listed
+    assert "999999999" not in listed
+
+
+def test_email_is_normalized_and_never_returned():
+    _application, client = _client()
+    room_id = _room(client)
+    _arm(client, room_id)
+    dana = next(item for item in _names(client, room_id) if item["display"] == "דנה לוי")
+    wrong = client.post(
+        f"/api/rooms/{room_id}/roster/identify",
+        json={"entry_id": dana["id"], "email": "yosi@example.test", "attempt": "norm-wrong"},
+    )
+    assert wrong.status_code == 401
+    assert wrong.json()["error"] == "identity_rejected"
+    assert "yosi@example.test" not in wrong.text
+    assert "dana@example.test" not in wrong.text
+    ok = client.post(
+        f"/api/rooms/{room_id}/roster/identify",
+        json={"entry_id": dana["id"], "email": "  Dana@Example.TEST  ", "attempt": "norm-ok"},
+    )
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert body["display"] == "דנה לוי"
+    assert "email" not in body
+    assert "dana@example.test" not in ok.text
+    roster = client.get(f"/api/rooms/{room_id}/roster", headers=_auth())
+    assert "dana@example.test" not in roster.text
+    exported = client.get(f"/api/rooms/{room_id}/export.csv", headers=_auth())
+    assert "dana@example.test" not in exported.text

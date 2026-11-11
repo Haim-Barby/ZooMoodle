@@ -1,7 +1,8 @@
-"""Room roster import and a weak last-four identity check.
+"""Room roster import and email confirmation.
 
-The national id and email from the CSV are not stored. The last four digits
-are kept only as an HMAC under the server master secret and a per-person salt.
+The national id from the CSV is ignored and not stored. The email is kept
+only as an HMAC under the server master secret and a per-person salt.
+Plain email is never stored or returned.
 """
 
 from __future__ import annotations
@@ -15,15 +16,14 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
-PIN_WINDOW_SECONDS = 600
-PIN_LIMITS = {"entry": 5, "ip": 20, "attempt": 10}
+IDENTITY_WINDOW_SECONDS = 600
+IDENTITY_LIMITS = {"entry": 5, "ip": 20, "attempt": 10}
 
-HEADER_GIVEN = "שם פרטי"
-HEADER_FAMILY = "שם משפחה"
-HEADER_ID = "מספר זיהוי"
-HEADER_EMAIL = 'דוא"ל'
-HEADER_GROUP = "קבוצות"
-REQUIRED_HEADERS = (HEADER_GIVEN, HEADER_FAMILY, HEADER_ID, HEADER_EMAIL, HEADER_GROUP)
+GIVEN_ALIASES = frozenset({"שם פרטי", "first name", "given name", "given", "firstname", "first"})
+FAMILY_ALIASES = frozenset({"שם משפחה", "last name", "family name", "family", "lastname", "surname", "last"})
+NAME_ALIASES = frozenset({"שם", "name", "full name", "student name"})
+EMAIL_ALIASES = frozenset({"דואל", "email", "e-mail", "e mail", "mail"})
+GROUP_ALIASES = frozenset({"קבוצות", "קבוצה", "group", "groups"})
 
 
 class RosterError(Exception):
@@ -37,9 +37,48 @@ def _norm_header(value: str) -> str:
     return text.replace("״", '"').replace("“", '"').replace("”", '"')
 
 
-def pin_mac(master: bytes, salt: bytes, entry_id: str, pin: str) -> bytes:
-    message = salt + b"|" + entry_id.encode("utf-8") + b"|" + pin.encode("ascii")
+def _header_key(value: str) -> str:
+    text = _norm_header(value)
+    for mark in ('"', "׳", "'"):
+        text = text.replace(mark, "")
+    return " ".join(text.casefold().split())
+
+
+def normalize_email(value: str) -> str:
+    return (value or "").strip().casefold()
+
+
+def is_valid_email(value: str) -> bool:
+    email = normalize_email(value)
+    if email.count("@") != 1 or " " in email:
+        return False
+    local, domain = email.split("@")
+    if not local or not domain or "." not in domain:
+        return False
+    if domain.startswith(".") or domain.endswith(".") or ".." in domain:
+        return False
+    return True
+
+
+def email_mac(master: bytes, salt: bytes, entry_id: str, email: str) -> bytes:
+    message = salt + b"|" + entry_id.encode("utf-8") + b"|" + normalize_email(email).encode("utf-8")
     return hmac.new(master, message, hashlib.sha256).digest()
+
+
+def _pick_header(indexed: dict[str, str], aliases: frozenset[str]) -> str | None:
+    for key, original in indexed.items():
+        if key in aliases:
+            return original
+    return None
+
+
+def _index_headers(fieldnames: list[str] | None) -> dict[str, str]:
+    indexed: dict[str, str] = {}
+    for name in fieldnames or []:
+        if not name:
+            continue
+        indexed[_header_key(name)] = name
+    return indexed
 
 
 @dataclass
@@ -79,32 +118,40 @@ def parse_roster_csv(text: str) -> tuple[list[dict], dict]:
     if text.startswith("\ufeff"):
         text = text.lstrip("\ufeff")
     reader = csv.DictReader(io.StringIO(text))
-    if reader.fieldnames is None:
-        raise RosterError("roster_headers")
-    mapped = {_norm_header(name): name for name in reader.fieldnames if name}
-    missing = [header for header in REQUIRED_HEADERS if header not in mapped]
-    if missing:
+    indexed = _index_headers(reader.fieldnames)
+    email_header = _pick_header(indexed, EMAIL_ALIASES)
+    given_header = _pick_header(indexed, GIVEN_ALIASES)
+    family_header = _pick_header(indexed, FAMILY_ALIASES)
+    name_header = _pick_header(indexed, NAME_ALIASES)
+    group_header = _pick_header(indexed, GROUP_ALIASES)
+    if email_header is None or not ((given_header and family_header) or name_header):
         raise RosterError("roster_headers")
     rows: list[dict] = []
     seen: set[str] = set()
     stats = {"imported": 0, "duplicates": 0, "skipped": 0, "groups": {}}
     for raw in reader:
-        given = (raw.get(mapped[HEADER_GIVEN]) or "").strip()
-        family = (raw.get(mapped[HEADER_FAMILY]) or "").strip()
-        national = "".join((raw.get(mapped[HEADER_ID]) or "").split())
-        group = (raw.get(mapped[HEADER_GROUP]) or "").strip()
-        if not given and not family and not national and not group:
+        if given_header and family_header:
+            given = (raw.get(given_header) or "").strip()
+            family = (raw.get(family_header) or "").strip()
+        else:
+            full = (raw.get(name_header) or "").strip()
+            parts = full.split(None, 1)
+            given = parts[0] if parts else ""
+            family = parts[1] if len(parts) > 1 else ""
+        email = normalize_email(raw.get(email_header) or "")
+        group = (raw.get(group_header) or "").strip() if group_header else ""
+        if not given and not family and not email and not group:
             stats["skipped"] += 1
             continue
-        if not given or not family or not national.isdigit() or len(national) < 4:
+        if not (given or family) or not is_valid_email(email):
             stats["skipped"] += 1
             continue
-        digest = hashlib.sha256(national.encode("ascii")).hexdigest()
+        digest = hashlib.sha256(email.encode("utf-8")).hexdigest()
         if digest in seen:
             stats["duplicates"] += 1
             continue
         seen.add(digest)
-        rows.append({"given": given, "family": family, "last4": national[-4:], "group": group})
+        rows.append({"given": given, "family": family, "email": email, "group": group})
         stats["groups"][group] = stats["groups"].get(group, 0) + 1
     stats["imported"] = len(rows)
     return rows, stats
@@ -126,7 +173,7 @@ class RoomRoster:
         for row in rows:
             entry_id = secrets.token_hex(8)
             salt = os.urandom(16)
-            verifier = pin_mac(self.master, salt, entry_id, row["last4"])
+            verifier = email_mac(self.master, salt, entry_id, row["email"])
             sealed[entry_id] = RosterEntry(
                 id=entry_id,
                 given=row["given"],
@@ -182,26 +229,26 @@ class RoomRoster:
             )
         return rows
 
-    def check_pin(self, entry_id: str, pin: str, ip: str, attempt: str) -> RosterEntry:
+    def verify_email(self, entry_id: str, email: str, ip: str, attempt: str) -> RosterEntry:
         keys = (
-            ("entry:" + (entry_id or ""), PIN_LIMITS["entry"]),
-            ("ip:" + (ip or "unknown"), PIN_LIMITS["ip"]),
-            ("attempt:" + (attempt or "none"), PIN_LIMITS["attempt"]),
+            ("entry:" + (entry_id or ""), IDENTITY_LIMITS["entry"]),
+            ("ip:" + (ip or "unknown"), IDENTITY_LIMITS["ip"]),
+            ("attempt:" + (attempt or "none"), IDENTITY_LIMITS["attempt"]),
         )
         for key, limit in keys:
-            if not self.limiter.allow(key, limit, PIN_WINDOW_SECONDS):
+            if not self.limiter.allow(key, limit, IDENTITY_WINDOW_SECONDS):
                 raise RosterError("identity_limited")
         entry = self.entries.get(entry_id or "")
-        candidate = (pin or "").strip()
-        if entry is None or not self._selected(entry) or len(candidate) != 4 or not candidate.isdigit():
-            dummy = pin_mac(self.master, b"\x00" * 16, "none", "0000")
+        candidate = normalize_email(email)
+        if entry is None or not self._selected(entry) or not is_valid_email(candidate):
+            dummy = email_mac(self.master, b"\x00" * 16, "none", "nobody@example.invalid")
             hmac.compare_digest(dummy, b"\x00" * 32)
             ok = False
         else:
-            got = pin_mac(self.master, entry.salt, entry.id, candidate)
+            got = email_mac(self.master, entry.salt, entry.id, candidate)
             ok = hmac.compare_digest(got, entry.verifier)
         if not ok:
             for key, _limit in keys:
-                self.limiter.add(key, PIN_WINDOW_SECONDS)
+                self.limiter.add(key, IDENTITY_WINDOW_SECONDS)
             raise RosterError("identity_rejected")
         return entry

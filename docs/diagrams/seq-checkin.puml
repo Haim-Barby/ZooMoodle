@@ -4,23 +4,29 @@ title In-class check-in
 actor Student
 participant "Student page" as UI
 participant "HTTP API" as API
-participant AttendanceService as Att
-participant TokenService as Tok
-participant AnomalyDetector as Det
+participant RoomRoster as Roster
+participant ScreenQrService as QR
+participant "Local helper" as Helper
+actor Lecturer
 
-Student -> UI : pick seat, allow microphone
-UI -> UI : decode 18/19 kHz FSK\nor read the on-screen code
-UI -> API : POST /challenge\n(device id + public key)
-API -> Att : open_challenge
-Att --> UI : challenge id + nonce
-UI -> UI : sign challenge|nonce\nwith the device key
-UI -> API : POST /checkin\n(signature, code, zone)
-API -> Att : check_in
-Att -> Att : reject if challenge is old,\nreused, or signature fails
-Att -> Tok : verify HMAC for this\nwindow or the previous one
-Tok --> Att : fresh, late, or mismatch
-Att -> Att : reject a bad code or a code\nthis device already used
-Att -> Det : recompute flags
-Det --> API : confidence + flags
-API --> Student : in-class result
+Student -> UI : pick name, confirm email
+UI -> API : identify
+API -> Roster : verify email HMAC
+Roster --> API : session, no checkmark
+API --> UI : session
+
+Student -> UI : hold camera 2s\non live barcode
+UI -> API : POST distinct frames
+API -> QR : liveness, freshness,\nsingle-use, room bind
+QR --> API : ok or qr_static / qr_short
+API --> UI : barcode accepted
+
+Student -> Helper : open /prove?c=...
+Helper -> Helper : bound address\nand peer in range
+Helper -> API : HMAC observe
+Helper --> UI : redirect
+
+UI -> API : finish
+API --> Student : checkmark and welcome
+API --> Lecturer : ✓ on roster
 @enduml

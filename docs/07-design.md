@@ -1,6 +1,6 @@
 # Design
 
-Class and sequence diagrams for the demo. Sources and SVG exports live in `docs/diagrams/`. Full agent, hotspot-setup, and Render notes remain in [09-ai-agent](09-ai-agent.md), [12-hotspot-presence](12-hotspot-presence.md), and [deploy-render](deploy-render.md); the essentials used for attendance and the agents are summarized here.
+Class and sequence diagrams for the demo. Sources and SVG exports live in `docs/diagrams/` (`classes`, `seq-checkin`, and `components` in the components document). How to run the demo, start the hotspot helper, and deploy on Render is in the [README](../README.md). Agent, hotspot, and deploy essentials used by the design are summarized here.
 
 ## Design rules that the code follows
 
@@ -38,7 +38,7 @@ Name and email confirmation create a student session without a checkmark. The ph
 
 ### Other sequences
 
-Remote check-in, polls, export, the agent loop, and the connection test are unchanged in structure and remain in `docs/diagrams/` (`seq-remote`, `seq-poll`, `seq-export`, `seq-agent`, `seq-llm-test`). Remote admission still creates no roster checkmark. Export remains lecturer-only and is not model input. The agent loop still requires a data tool before `produce_report` and rejects a fabricated or ungraded homework report (`not_a_grade` must be `true`).
+Remote check-in, polls, export, the agent loop, and the connection test follow the same services and are not given separate diagram files. Remote admission still creates no roster checkmark. Export remains lecturer-only and is not model input. The agent loop still requires a data tool before `produce_report` and rejects a fabricated or ungraded homework report (`not_a_grade` must be `true`).
 
 ## Hotspot and launchers (essentials)
 

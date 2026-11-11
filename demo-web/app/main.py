@@ -43,12 +43,7 @@ PROOF_METHODS = ("sound", "qr", "both")
 DIAGRAM_TITLES = {
     "classes": "Class diagram",
     "components": "Components",
-    "seq-agent": "Sequence: lesson agent",
-    "seq-checkin": "Sequence: acoustic check-in",
-    "seq-export": "Sequence: attendance export",
-    "seq-llm-test": "Sequence: model connection",
-    "seq-poll": "Sequence: poll",
-    "seq-remote": "Sequence: remote join",
+    "seq-checkin": "Sequence: in-class check-in",
 }
 NOT_CONFIGURED = (
     "No LLM API key is configured. On the lecturer page, choose a provider, "

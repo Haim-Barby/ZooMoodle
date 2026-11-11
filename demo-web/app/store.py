@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import secrets
 import time
 
-from app.attention import AttentionAggregator
+from app.checkin import CheckinBook
 from app.config import Settings
-from app.crypto_tokens import IssuedToken, KeyManager, TokenService
-from app.attendance import AttendanceService
-from app.domain import SEAT_ZONES, Comment, HomeworkSubmission, Poll, Question
-from app.llm.providers import LLMConfig
+from app.domain import SEAT_ZONES, Comment, HomeworkFile, Poll, Question
 from app.llm.tools import pseudonym, redact
-from app.presence import PresenceBook
+from app.mailer import Mailer
 from app.roster import RoomRoster
+from app.screen_qr import ScreenQrService
 from app.session_keys import SessionBook
+
+MAX_HOMEWORK_BYTES = 5 * 1024 * 1024
 
 
 class StoreError(Exception):
@@ -25,72 +27,44 @@ class StoreError(Exception):
         self.status = status
 
 
+def derive_room_key(master: bytes, salt: bytes) -> bytes:
+    return hmac.new(master, b"zoomoodle-room-v2|" + salt, hashlib.sha256).digest()
+
+
 class Room:
-    def __init__(self, room_id: str, title: str, salt: bytes, key: bytes, attendance: AttendanceService):
+    def __init__(self, room_id: str, title: str, key: bytes, settings: Settings, mailer: Mailer):
         self.id = room_id
         self.title = title
-        self.salt = salt
         self.key = key
         self.created_at = time.time()
-        self.broadcast: IssuedToken | None = None
-        self.attendance = attendance
+        self.closed = False
+        self.roster = RoomRoster(settings.master_secret)
+        self.screen_qr = ScreenQrService()
+        self.checkin = CheckinBook(settings.master_secret, self.roster, self.screen_qr, mailer, settings.course_name)
+        self.sessions = SessionBook()
         self.polls: list[Poll] = []
         self.comments: list[Comment] = []
         self.questions: list[Question] = []
-        self.homework: list[HomeworkSubmission] = []
+        self.homework: list[HomeworkFile] = []
         self.transcript = ""
-        self.attention = AttentionAggregator()
-        self.names: dict[str, str] = {}
-        self.closed = False
-        self.audio_band = "ultrasonic"
-        self.proof = "both"
-        self.summary_draft = ""
-        self.summary_published = ""
-        self.sessions = SessionBook()
-        self.sources: list = []
-        self.allow_model_qa = False
+        self.summary = ""
+        self.summary_source = ""
 
 
 class Store:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, mailer: Mailer | None = None):
         self.settings = settings
-        self.keys = KeyManager(settings.master_secret)
-        self.tokens = TokenService(
-            window_seconds=settings.token_window_seconds,
-            grace_windows=settings.grace_windows,
-        )
+        self.mailer = mailer or Mailer(settings)
         self.rooms: dict[str, Room] = {}
-        self.llm = LLMConfig(
-            provider=settings.llm_provider,
-            model=settings.llm_model,
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            timeout_seconds=settings.llm_timeout_seconds,
-        )
 
     def create_room(self, title: str) -> Room:
-        title = (title or "Untitled lesson").strip()[:120] or "Untitled lesson"
-        salt = os.urandom(16)
-        room_id = secrets.token_hex(3)
+        default = f"{self.settings.course_name} – שבוע {self.settings.course_week}"
+        title = (title or default).strip()[:120] or default
+        room_id = secrets.token_hex(4)
         while room_id in self.rooms:
-            room_id = secrets.token_hex(3)
-        room = Room(
-            room_id,
-            title,
-            salt,
-            self.keys.derive_room_key(salt),
-            AttendanceService(self.tokens, self.settings.challenge_max_age_seconds),
-        )
-        room.roster = RoomRoster(self.settings.master_secret)
-        room.presence = PresenceBook()
+            room_id = secrets.token_hex(4)
+        room = Room(room_id, title, derive_room_key(self.settings.master_secret, os.urandom(16)), self.settings, self.mailer)
         self.rooms[room_id] = room
-        return room
-
-    def close_room(self, room_id: str) -> Room:
-        room = self.get(room_id)
-        room.closed = True
-        room.sessions.revoke_all()
-        room.presence.close()
         return room
 
     def get(self, room_id: str) -> Room:
@@ -99,191 +73,127 @@ class Store:
             raise StoreError("unknown_room", 404)
         return room
 
-    def current_token(self, room_id: str) -> IssuedToken:
+    def close_room(self, room_id: str) -> Room:
         room = self.get(room_id)
-        now = self.tokens.now()
-        window = self.tokens.window_for(now)
-        if room.broadcast is None or room.broadcast.window != window:
-            room.broadcast = self.tokens.issue(room.key, room.id, now)
-        return room.broadcast
+        room.closed = True
+        return room
 
-    def remember_name(self, room: Room, student_id: str, student_name: str) -> None:
-        if student_name:
-            room.names[student_id] = student_name.strip()[:80]
-
-    def add_poll(self, room_id: str, question: str, options: list[str], correct: str | None) -> Poll:
-        room = self.get(room_id)
+    # ----- polls, notes, questions ---------------------------------------
+    def add_poll(self, room: Room, question: str, options: list, correct) -> Poll:
         question = (question or "").strip()
-        cleaned = []
+        cleaned: list[str] = []
         for option in options or []:
             text = str(option).strip()
             if text and text not in cleaned:
                 cleaned.append(text[:80])
         if not question or len(cleaned) < 2 or len(cleaned) > 6:
             raise StoreError("poll_needs_a_question_and_2_to_6_options")
-        if correct is not None and correct not in cleaned:
+        if correct not in (None, "") and correct not in cleaned:
             raise StoreError("correct_option_must_be_one_of_the_options")
-        poll = Poll(id=secrets.token_hex(4), question=question[:200], options=cleaned, correct_option=correct)
+        poll = Poll(id=secrets.token_hex(4), question=question[:200], options=cleaned, correct_option=correct or None)
         room.polls.append(poll)
         return poll
 
-    def answer_poll(self, room_id: str, poll_id: str, student_id: str, option: str, seat_zone: str) -> Poll:
-        room = self.get(room_id)
-        student_id = student_id.strip()
-        if not student_id:
-            raise StoreError("missing_identity")
-        zone = (seat_zone or "").strip()
-        # Remote students have no seat. An empty zone is still rejected.
-        if zone != "remote" and zone not in SEAT_ZONES:
-            raise StoreError("bad_zone")
+    def answer_poll(self, room: Room, poll_id: str, student_id: str, option: str, zone: str) -> Poll:
         poll = next((item for item in room.polls if item.id == poll_id), None)
         if poll is None:
             raise StoreError("unknown_poll", 404)
+        if not poll.open:
+            raise StoreError("poll_closed", 409)
         if option not in poll.options:
             raise StoreError("bad_option")
+        if zone != "remote" and zone not in SEAT_ZONES:
+            raise StoreError("bad_zone")
         if any(answer["student_id"] == student_id for answer in poll.answers):
-            raise StoreError("already_answered")
+            raise StoreError("already_answered", 409)
         poll.answers.append({"student_id": student_id, "option": option, "seat_zone": zone})
         return poll
 
-    def add_question(self, room_id: str, student_id: str, text: str) -> Question:
-        room = self.get(room_id)
-        student_id = student_id.strip()
+    def add_comment(self, room: Room, student_id: str, text: str) -> Comment:
         text = (text or "").strip()
-        if not student_id:
-            raise StoreError("missing_identity")
         if not text:
-            raise StoreError("missing_question")
-        question = Question(
-            id=secrets.token_hex(4),
-            student_id=student_id[:80],
-            text=text[:1000],
-            at=time.time(),
-        )
-        room.questions.append(question)
-        return question
-
-    def upvote_question(self, room_id: str, question_id: str, student_id: str) -> Question:
-        room = self.get(room_id)
-        student_id = student_id.strip()
-        if not student_id:
-            raise StoreError("missing_identity")
-        question = next((item for item in room.questions if item.id == question_id), None)
-        if question is None:
-            raise StoreError("unknown_question", 404)
-        if student_id in question.upvotes:
-            raise StoreError("already_upvoted")
-        question.upvotes.append(student_id[:80])
-        return question
-
-    def questions_by_votes(self, room_id: str) -> list[Question]:
-        room = self.get(room_id)
-        return sorted(room.questions, key=lambda item: (-len(item.upvotes), item.at, item.id))
-
-    def save_summary_draft(self, room_id: str, text: str) -> str:
-        room = self.get(room_id)
-        room.summary_draft = (text or "").strip()[:20000]
-        return room.summary_draft
-
-    def publish_summary(self, room_id: str, text: str | None) -> str:
-        room = self.get(room_id)
-        if text is None:
-            published = room.summary_draft.strip()
-        else:
-            published = str(text).strip()[:20000]
-            room.summary_draft = published
-        if not published:
-            raise StoreError("missing_summary")
-        room.summary_published = published
-        return published
-
-    def add_comment(self, room_id: str, student_id: str, student_name: str, text: str) -> Comment:
-        room = self.get(room_id)
-        student_id = student_id.strip()
-        text = (text or "").strip()
-        if not student_id or not text:
             raise StoreError("missing_comment")
-        self.remember_name(room, student_id, student_name)
         comment = Comment(id=secrets.token_hex(4), student_id=student_id, text=text[:2000], at=time.time())
         room.comments.append(comment)
         return comment
 
-    def add_homework(self, room_id: str, student_id: str, student_name: str, text: str) -> HomeworkSubmission:
-        room = self.get(room_id)
-        student_id = student_id.strip()
+    def add_question(self, room: Room, student_id: str, text: str) -> Question:
         text = (text or "").strip()
-        if not student_id or not text:
-            raise StoreError("missing_homework")
-        self.remember_name(room, student_id, student_name)
-        item = HomeworkSubmission(
+        if not text:
+            raise StoreError("missing_question")
+        question = Question(id=secrets.token_hex(4), student_id=student_id, text=text[:1000], at=time.time())
+        room.questions.append(question)
+        return question
+
+    def upvote_question(self, room: Room, question_id: str, student_id: str) -> Question:
+        question = next((item for item in room.questions if item.id == question_id), None)
+        if question is None:
+            raise StoreError("unknown_question", 404)
+        if student_id in question.upvotes:
+            raise StoreError("already_upvoted", 409)
+        question.upvotes.append(student_id)
+        return question
+
+    @staticmethod
+    def questions_by_votes(room: Room) -> list[Question]:
+        return sorted(room.questions, key=lambda item: (-len(item.upvotes), item.at, item.id))
+
+    # ----- homework --------------------------------------------------------
+    def add_homework(self, room: Room, title: str, filename: str, content_type: str, data: bytes) -> HomeworkFile:
+        if not data:
+            raise StoreError("missing_file")
+        if len(data) > MAX_HOMEWORK_BYTES:
+            raise StoreError("file_too_large", 413)
+        safe_name = "".join(ch for ch in os.path.basename(filename or "homework") if ch not in '\\/:*?"<>|\r\n')[:120]
+        item = HomeworkFile(
             id="hw_" + secrets.token_hex(4),
-            student_id=student_id,
-            text=text[:20000],
+            title=(title or safe_name or "שיעורי בית").strip()[:120],
+            filename=safe_name or "homework",
+            content_type=(content_type or "application/octet-stream")[:100],
+            data=data,
             at=time.time(),
         )
         room.homework.append(item)
         return item
 
-    def set_transcript(self, room_id: str, text: str) -> int:
-        room = self.get(room_id)
-        room.transcript = (text or "")[:200000]
-        return len(room.transcript)
-
-    def snapshot(self, room_id: str) -> tuple[dict, list[str], list[str]]:
-        room = self.get(room_id)
-        names = [name for name in room.names.values() if name]
-        student_ids = list(room.names)
-        # Also redact names that appear only on attendance records.
-        for record in room.attendance.records:
-            if record.student_name and record.student_name not in names:
-                names.append(record.student_name)
-            if record.student_id not in student_ids:
-                student_ids.append(record.student_id)
+    # ----- summary input -----------------------------------------------------
+    def snapshot(self, room: Room) -> tuple[dict, list[str], list[str]]:
+        names = []
+        ids = list(room.checkin.claims)
+        for claim in room.checkin.claims.values():
+            entry = room.roster.entries.get(claim.entry_id)
+            if entry and entry.display not in names:
+                names.append(entry.display)
 
         def clean(text: str) -> str:
-            return redact(text, names, student_ids)
+            return redact(text, names, ids)
 
-        attention = room.attention.by_zone()
-        attention["samples"] = list(room.attention.samples)
-        polls = []
-        for poll in room.polls:
-            polls.append(
+        snapshot = {
+            "room_id": room.id,
+            "title": room.title,
+            "transcript": clean(room.transcript),
+            "polls": [
                 {
                     "id": poll.id,
                     "question": poll.question,
                     "options": list(poll.options),
                     "correct_option": poll.correct_option,
                     "answers": [
-                        {
-                            "option": answer["option"],
-                            "seat_zone": answer["seat_zone"],
-                            "pseudonym": pseudonym(answer["student_id"]),
-                        }
-                        for answer in poll.answers
+                        {"option": a["option"], "seat_zone": a["seat_zone"], "pseudonym": pseudonym(a["student_id"])}
+                        for a in poll.answers
                     ],
                 }
-            )
-        snapshot = {
-            "room_id": room.id,
-            "title": room.title,
-            "transcript": clean(room.transcript),
-            "polls": polls,
+                for poll in room.polls
+            ],
             "comments": [
-                {
-                    "id": comment.id,
-                    "pseudonym": pseudonym(comment.student_id),
-                    "text": clean(comment.text),
-                }
-                for comment in room.comments
+                {"id": c.id, "pseudonym": pseudonym(c.student_id), "text": clean(c.text)}
+                for c in room.comments
+            ]
+            + [
+                {"id": q.id, "pseudonym": pseudonym(q.student_id), "text": "שאלה: " + clean(q.text), "votes": len(q.upvotes)}
+                for q in room.questions
             ],
-            "homework": [
-                {
-                    "id": item.id,
-                    "pseudonym": pseudonym(item.student_id),
-                    "text": clean(item.text),
-                }
-                for item in room.homework
-            ],
-            "attention": attention,
+            "homework": [],
+            "attention": {"empty": True, "zones": {}, "source": "none", "disclaimer": "No camera data in this demo.", "samples": []},
         }
-        return snapshot, names, student_ids
+        return snapshot, names, ids

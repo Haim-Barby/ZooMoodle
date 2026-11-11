@@ -17,11 +17,23 @@ services:
         value: "3.12.8"
       - key: ZOOMODLE_MASTER_SECRET
         generateValue: true
-      - key: ZOOMODLE_LECTURER_TOKEN
+      # The one lecturer key. Reveal it in the Dashboard; startup never prints it.
+      # (An older service that only has ZOOMODLE_LECTURER_TOKEN keeps working: it is used as the key.)
+      - key: ZOOMODLE_LECTURER_KEY
         generateValue: true
-      # Empty disables the campus subnet check. Do not enable it for this demo.
-      - key: ZOOMODLE_ALLOWED_SUBNETS
-        value: ""
+      # University public ranges for the in-class network check.
+      - key: ZOOMODLE_CAMPUS_RANGES
+        value: 192.114.48.0/21,192.114.56.0/23
+      # Optional SMTP for duplicate-name codes. Without it the code is shown on the
+      # lecturer dashboard ("מצב הדגמה – המייל לא נשלח").
+      - key: ZOOMODLE_SMTP_HOST
+        sync: false
+      - key: ZOOMODLE_SMTP_USER
+        sync: false
+      - key: ZOOMODLE_SMTP_PASSWORD
+        sync: false
+      - key: DEMO_EMAIL_OVERRIDE
+        sync: false
       # Do not set this to *. Uvicorn would copy the leftmost X-Forwarded-For hop,
       # which the browser can forge, into the socket address. Loopback only.
       - key: FORWARDED_ALLOW_IPS

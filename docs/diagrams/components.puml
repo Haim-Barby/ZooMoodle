@@ -1,49 +1,51 @@
 @startuml components
-title ZooMoodle components
-
+!pragma layout smetana
+title ZooMoodle – components
 skinparam componentStyle rectangle
-skinparam shadowing false
 
+package "Lecturer laptop (browser)" {
+  [Lecturer page] as LP
+  [Live barcode canvas] as LB
+  [Join QR] as JQ
+}
 package "Student phone (browser)" {
-  [Student page] as StudentUI
-  [Camera / QR decoder] as Cam
+  [Student page] as SP
+  [Camera + jsQR] as CAM
 }
-
-package "Lecturer laptop" {
-  [Lecturer page] as LecturerUI
-  [Flickering barcode] as Barcode
-  [Local presence helper] as Helper
-}
-
-package "ZooMoodle server" {
+cloud "HTTPS proxy\n(Render / cloudflared)" as PX
+package "ZooMoodle server (FastAPI)" {
   [HTTP API] as API
-  [Room store] as Store
-  [KeyManager] as Keys
-  [RoomRoster] as Roster
-  [ScreenQrService] as ScreenQr
-  [Network range] as Range
-  [AttendanceService] as Attendance
-  [ExportService] as Export
-  [LessonAgent] as Agent
-  [LLMClient] as Client
+  [LecturerAuth] as AUTH
+  [Store / Room] as ST
+  [RoomRoster] as RR
+  [CheckinBook] as CB
+  [ScreenQrService] as QR
+  [net.client_ip] as NET
+  [SessionBook] as SB
+  [Mailer] as ML
+  [ExportService] as EX
+  [SummaryService + LessonAgent] as AG
 }
+cloud "SMTP server" as SMTP
+cloud "LLM provider" as LLM
 
-cloud "LLM provider" as Provider
-
-StudentUI --> API : identify, barcode, poll,\ncomment, homework
-LecturerUI --> API : room, roster, barcode,\nexport, agent, LLM test
-Cam --> StudentUI
-Barcode --> LecturerUI
-StudentUI --> Helper : /prove
-Helper --> API : observe
-API --> Store
-Store --> Keys
-Store --> Roster
-Store --> ScreenQr
-Store --> Attendance
-Attendance --> Range
-API --> Export
-API --> Agent
-Agent --> Client
-Client --> Provider : tool-calling HTTPS
+LP --> PX : X-Lecturer-Session
+LB --> PX : GET barcode
+JQ ..> SP : opens
+CAM ..> LB : films
+CAM --> SP : codes
+SP --> PX : signed requests
+PX --> API : + client IP header
+API --> AUTH
+API --> SB
+API --> NET
+API --> ST
+ST --> RR
+ST --> CB
+CB --> QR
+CB --> ML
+ML --> SMTP
+API --> EX
+API --> AG
+AG --> LLM
 @enduml

@@ -18,8 +18,9 @@ def test_render_blueprint_is_a_free_python_web_service():
     assert "generateValue: true" in text
     assert text.count("generateValue: true") >= 2
     assert "ZOOMODLE_MASTER_SECRET" in text
-    assert "ZOOMODLE_LECTURER_TOKEN" in text
-    assert "ZOOMODLE_ALLOWED_SUBNETS" in text
+    assert "ZOOMODLE_LECTURER_KEY" in text
+    assert "ZOOMODLE_CAMPUS_RANGES" in text
+    assert "192.114.48.0/21,192.114.56.0/23" in text
     assert 'value: "*"' not in text and "value: '*'" not in text
     assert "FORWARDED_ALLOW_IPS" in text
     assert 'value: "127.0.0.1"' in text

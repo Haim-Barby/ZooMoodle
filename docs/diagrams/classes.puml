@@ -1,114 +1,112 @@
 @startuml classes
-title Core classes
+!pragma layout smetana
+title ZooMoodle – classes
+skinparam classAttributeIconSize 0
+hide empty members
 
-skinparam shadowing false
-hide circle
-
+class Settings {
+  lecturer_key
+  campus_ranges
+  trusted_proxies
+  smtp_*, demo_email_override
+  greeting()
+}
+class LecturerAuth {
+  -digest: HMAC(key)
+  sign_in(key): token
+  check(token): bool
+}
+class Store {
+  rooms
+  create_room(title): Room
+  add_poll() / answer_poll()
+  add_comment() / add_question()
+  add_homework()
+  snapshot(room)
+}
 class Room {
-  id
-  salt
-  key
-  transcript
+  id, title, key, closed
+  transcript, summary
 }
-
-class KeyManager {
-  derive_room_key(salt)
-}
-
 class RoomRoster {
-  import_csv()
-  verify_email()
+  entries
+  replace_from_csv(csv)
+  public_names()
+  email_for(entry_id)
 }
-
+class RosterEntry {
+  id, given, family
+  salt, verifier(HMAC email)
+  -email (memory only)
+}
+class CheckinBook {
+  claims, challenges
+  join(entry, mode, on_campus)
+  submit_barcode(claim, codes, on_campus)
+  choose_area(claim, zone)
+  repick(claim, entry)
+  submit_code(claim, code)
+  decide(claim_id, action)
+}
+class Claim {
+  id, entry_id, mode
+  state, zone
+  verified, repicked, owner
+}
+class EmailChallenge {
+  entry_id, code_mac, salt
+  expires_at, attempts, used
+}
 class ScreenQrService {
-  current_frame()
-  verify_sequence()
+  issue(room_key, room_id)
+  verify_sequence(codes)
+  flicker_seed()
 }
-
-class NetworkRange {
-  contains(peer)
+class SessionBook {
+  issue(claim_id)
+  verify(signature, nonce, time)
 }
-
-class PresenceHelper {
-  prove(challenge)
+class Mailer {
+  send_code(email, name, code)
 }
-
-class AttendanceService {
-  identify()
-  finish()
+class "net" as Net <<module>> {
+  client_ip(headers, peer, trusted)
+  subnet_status(ip, ranges)
 }
-
-class AnomalyDetector {
-  apply(records)
-}
-
-class SeatZone {
-  value
-}
-
-class Poll {
-  question
-  options
-  answers
-}
-
-class Comment {
-  text
-}
-
-class HomeworkSubmission {
-  id
-  text
-}
-
-class ExportService {
-  to_csv()
-  to_xlsx()
-}
-
-class AttentionAggregator {
-  add_sample()
-  by_zone()
-}
-
-class LLMClient {
-  complete()
-  test_connection()
-}
-
-class LessonAgent {
-  run(task, snapshot)
-}
-
-class ToolRegistry {
-  dispatch()
-  produce_report()
-}
-
+class Poll
+class Comment
+class Question
+class HomeworkFile
 class SummaryService {
-  summarize()
+  summarize(snapshot)
+}
+class LessonAgent
+class LLMClient
+class ExportService {
+  to_csv() / to_xlsx()
 }
 
-class HomeworkReviewService {
-  review()
-}
-
-KeyManager --> Room
-RoomRoster --> Room
-ScreenQrService --> Room
-AttendanceService --> RoomRoster
-AttendanceService --> ScreenQrService
-AttendanceService --> PresenceHelper
-PresenceHelper --> NetworkRange
-AttendanceService --> AnomalyDetector
-AttendanceService --> SeatZone
-Room --> Poll
-Room --> Comment
-Room --> HomeworkSubmission
-Room --> AttentionAggregator
-ExportService --> AttendanceService
+Store "1" *-- "*" Room
+Room *-- RoomRoster
+Room *-- CheckinBook
+Room *-- ScreenQrService
+Room *-- SessionBook
+Room *-- "*" Poll
+Room *-- "*" Comment
+Room *-- "*" Question
+Room *-- "*" HomeworkFile
+RoomRoster *-- "*" RosterEntry
+CheckinBook *-- "*" Claim
+CheckinBook *-- "*" EmailChallenge
+CheckinBook --> ScreenQrService
+CheckinBook --> RoomRoster
+CheckinBook --> Mailer
+Claim ..> RosterEntry : entry_id
+Store --> Mailer
 SummaryService --> LessonAgent
-HomeworkReviewService --> LessonAgent
 LessonAgent --> LLMClient
-LessonAgent --> ToolRegistry
+SummaryService ..> Store : snapshot
+ExportService ..> Claim
+LecturerAuth ..> Settings
+Net ..> Settings
 @enduml

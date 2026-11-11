@@ -1,4 +1,4 @@
-"""CSV and XLSX attendance sheets for the lecturer."""
+"""CSV and XLSX attendance sheets for the lecturer. No email, no id number."""
 
 from __future__ import annotations
 
@@ -8,59 +8,39 @@ from datetime import datetime, timezone
 
 from openpyxl import Workbook
 
-from app.domain import AttendanceRecord
-
-COLUMNS = (
-    "student_id",
-    "name",
-    "mode",
-    "seat_zone",
-    "time_utc",
-    "confidence",
-    "flags",
-    "subnet",
-    "device_id",
-)
+COLUMNS = ("name", "mode", "status", "area", "time_utc")
 
 
 def _time(value: float) -> str:
     return datetime.fromtimestamp(value, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def rows(records: list[AttendanceRecord]) -> list[list[str]]:
-    table = []
-    for record in records:
-        table.append(
-            [
-                record.student_id,
-                record.student_name,
-                record.mode,
-                record.seat_zone,
-                _time(record.at),
-                record.confidence,
-                ";".join(record.flags),
-                record.subnet,
-                record.device_id,
-            ]
-        )
-    return table
+def _safe(value: str) -> str:
+    text = str(value or "")
+    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
 
 
 class ExportService:
-    def to_csv(self, records: list[AttendanceRecord]) -> bytes:
-        buffer = io.StringIO()
-        writer = csv.writer(buffer, lineterminator="\n")
-        writer.writerow(COLUMNS)
-        writer.writerows(rows(records))
-        return buffer.getvalue().encode("utf-8")
+    def rows(self, students: list[dict]) -> list[list[str]]:
+        return [
+            [_safe(s["name"]), s["mode"], s["state"], s["zone"], _time(s["at"])]
+            for s in students
+        ]
 
-    def to_xlsx(self, records: list[AttendanceRecord]) -> bytes:
+    def to_csv(self, students: list[dict]) -> bytes:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(COLUMNS)
+        writer.writerows(self.rows(students))
+        return ("\ufeff" + buffer.getvalue()).encode("utf-8")
+
+    def to_xlsx(self, students: list[dict]) -> bytes:
         book = Workbook()
         sheet = book.active
-        sheet.title = "Attendance"
+        sheet.title = "attendance"
         sheet.append(list(COLUMNS))
-        for row in rows(records):
+        for row in self.rows(students):
             sheet.append(row)
-        buffer = io.BytesIO()
-        book.save(buffer)
-        return buffer.getvalue()
+        out = io.BytesIO()
+        book.save(out)
+        return out.getvalue()

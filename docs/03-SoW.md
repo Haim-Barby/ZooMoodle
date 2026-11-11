@@ -1,46 +1,48 @@
 # Statement of work
 
-ZooMoodle, Introduction to Software Engineering, Exercise 2. Individual project. Deadline: 25 November 2026.
+ZooMoodle, Exercise 2, individual project. Deadline: 25 November 2026.
 
-## Objective and scope
+## Objective
 
-Deliver an implementable design and a ten-minute classroom demo of a teaching tool. Attendance is the priority. Students use a phone web page; the lecturer uses a laptop.
+A working design and a ten-minute classroom demo of a lesson tool whose main feature is trustworthy attendance, plus notes, questions, polls, homework files and an optional AI summary.
 
-The demo covers lesson rooms, combined in-class attendance (imported roster and email confirmation, a two-second live flickering barcode, and a local network verifier), a roster checkmark and welcome, separate remote attendance, seat zones, CSV/XLSX export, comments, polls, transcript import, and lesson/homework agents. Model configuration and a connection test support the agents. Full requirements are in the [SRS](04-SRS.md). The [README](../README.md) maps deliverables 1–11 to their files.
+## Scope
 
-An older ultrasonic FSK path remains in the UI as an optional tab and is not required for the checkmark. The attention extension uses labeled sample aggregates only. Native apps, university accounts, a durable database, live camera processing, and integrations with university systems are outside this demo. Converting recordings to transcripts is an external prerequisite.
+In: lecturer key sign-in with the greeting, lesson rooms, roster import, join QR, the live flickering barcode, the university-network check, remote join, classroom area, staged duplicate-name resolution (popup → e-mail code → lecturer), the lecturer dashboard, CSV/XLSX export, polls, notes, questions, homework upload and download, transcript import and an optional LLM summary.
 
-## Work sequence and status
+Out: Moodle/Zoom integration, university login, native apps, a database, face recognition, grading.
 
-1. Define the problem, scope, and tool choices — written; VM and Mac tests recorded.
-2. Specify requirements, use cases, components, classes, sequences, and testing — documents and diagrams present.
-3. Compose the demo and run automated tests — implemented; 103 tests passed on the owner's Mac.
-4. Validate a real phone camera, a real hotspot, HTTPS from a phone, and a live model — pending.
-5. Give the classroom demo and complete the final results — pending.
+## Work sequence
+
+1. Problem, scope and tools — done.
+2. Requirements, use cases, components, design, tests — done.
+3. Demo application and automated tests — done.
+4. Real phones on campus Wi-Fi, SMTP delivery, live model — owner, before the demo.
+5. Classroom demo and conclusions — owner.
 
 ## Assumptions
 
-- A single process holds lesson data in memory. Restarting clears rooms.
-- Phones reach the app through an HTTPS origin (tunnel or Render). The local verifier runs on the lecturer laptop, on the hotspot, not through that origin.
-- Barcode freshness uses the server clock. A live video relay from a classmate may pass liveness; the network check is what requires the lecturer's network.
-- Launchers start a saved helper setup. They do not fully turn on Internet Sharing or Mobile Hotspot.
-- A lecturer-supplied model is required for the agents. Tests use scripted responses. Known names are redacted on the agent path, with limits in the SRS.
+- One server process; data is in memory and lost on restart.
+- Phones reach the server over HTTPS (Render or a tunnel).
+- Campus Wi-Fi leaves the university through `192.114.48.0/21` / `192.114.56.0/23`, and the server sees that address.
+- The lecturer keeps the key private.
 
-## Principal risks
+## Risks
 
-| Risk | Response and remaining limit |
+| Risk | Response |
 | --- | --- |
-| Phone camera or HTTPS blocks the barcode scan | Requires a secure origin; untested on real phones. A still photo must not pass. |
-| Hotspot setup is manual, especially on a Mac | Documented steps and launchers; a failed helper means no checkmark. |
-| A classmate live-streams the lecturer screen | Liveness may pass; the local range check covers a student off the network. Relay from a phone already on the hotspot remains possible. |
-| Model unavailable or invalid | Connection test, read-only tools, report validation; return an error, not a substitute report. |
-| Process stops | Export attendance before shutdown; the demo has no recovery. |
+| Campus egress differs from the configured ranges | Ranges are an env setting; test with a phone before class. |
+| Student uses cellular data in class | The page tells them to switch to the campus Wi-Fi or join remotely. |
+| A classmate live-streams the barcode from a dorm on the campus network | Possible; the network range narrows it to campus, and duplicate names go to the lecturer. |
+| Camera blocked without HTTPS | Use Render or cloudflared. |
+| SMTP not available | Demo mode shows the code on the lecturer dashboard. |
+| Server restarts | Export the sheet before finishing. |
 
 ## Acceptance
 
-- Lecturer authentication gates room creation, roster and presence settings, attendance, exports, configuration, and lecturer AI actions.
-- A student can pick a name from the imported list, confirm with that email, complete a two-second live barcode capture, reach the local verifier, and then receive a checkmark and welcome. A still photo, a short capture, a stale or reused code, or a peer outside the configured range does not mark the roster.
-- Remote attendance stays a separate row, without a roster checkmark.
-- CSV and XLSX are lecturer-only and do not include a national id or the raw email.
-- Without model configuration, AI routes return a configuration error. With a tool-calling provider, agents must read data before a validated report; homework reviews require `not_a_grade: true`.
-- Completion requires recorded classroom and live-model results, not just written plans. Use the [demo script](10-demo-script.md) and fill the results table in the tools report.
+- Wrong lecturer key → refused; right key → the greeting.
+- In class needs both the campus network and a 2 s live scan; a screenshot or an off-campus IP is refused.
+- Remote join needs neither.
+- Duplicate names follow the four stages; the lecturer can always decide.
+- No id number is stored; emails and API keys never appear in responses, exports or logs.
+- All automated tests pass; classroom results are recorded in the tools report.

@@ -95,9 +95,10 @@
       <div class="card">
         <h2>סקר</h2>
         <input id="poll-q" placeholder="שאלה">
-        <input id="poll-opts" placeholder="תשובות מופרדות בפסיק" style="margin-top:.4rem">
-        <input id="poll-correct" placeholder="תשובה נכונה (לא חובה)" style="margin-top:.4rem">
+        <textarea id="poll-opts" placeholder="תשובות מופרדות בפסיק, בקו נטוי, או כל תשובה בשורה" style="margin-top:.4rem;min-height:4.2rem"></textarea>
+        <input id="poll-correct" placeholder="תשובה נכונה (לא חובה) — הטקסט או המספר" style="margin-top:.4rem">
         <button id="poll-create" type="button" style="margin-top:.5rem">פתח סקר</button>
+        <p id="poll-state" class="note" role="status"></p>
         <div id="polls"></div>
       </div>
       <div class="card">

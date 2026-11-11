@@ -24,6 +24,7 @@ const STORE_KEY = "zm-session-" + roomId;
 let session = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
 let names = [];
 let lastState = "";
+let lastShown = "";
 const scan = { stream: null, codes: [], first: 0, timer: 0, busy: false, hold: 2, canvas: null, ctx: null };
 
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -87,11 +88,15 @@ function render(me) {
   if (me.state === "pending_barcode") { step("step-scan"); return; }
   if (me.state === "needs_area") { stopScan(); step("step-area"); return; }
   if (me.state === "present" || me.state === "remote") {
+    const first = lastShown !== me.state;
+    lastShown = me.state;
     stopScan(); step("lesson");
     $("#welcome").textContent = me.welcome;
     $("#where").textContent = me.state === "remote" ? "מחובר מרחוק" : "בכיתה · " + (ZONE_HE[me.zone] || "");
+    if (first) refreshLesson().catch(() => {});
     return;
   }
+  lastShown = me.state;
   stopScan(); step("step-wait");
   $("#code-box").hidden = me.state !== "email_code";
   const texts = {
@@ -165,14 +170,22 @@ $("#code-send").addEventListener("click", async () => {
 });
 
 /* ----- lesson ----- */
+async function lessonPart(path, fallback) {
+  try { return await call(path); } catch (_err) { return fallback; }
+}
 async function refreshLesson() {
   if (lastState !== "present" && lastState !== "remote") return;
-  const [polls, questions, homework, summary] = await Promise.all([call(R("/polls")), call(R("/questions")), call(R("/homework")), call(R("/summary"))]);
-  const open = polls.polls.filter((p) => p.open || p.voted_option);
-  $("#polls").innerHTML = open.length ? open.map((p) => `<div style="margin-bottom:.7rem"><b>${esc(p.question)}</b><div class="row">${p.options.map((o) =>
+  const [polls, questions, homework, summary] = await Promise.all([
+    lessonPart(R("/polls"), { polls: [] }),
+    lessonPart(R("/questions"), { questions: [] }),
+    lessonPart(R("/homework"), { homework: [] }),
+    lessonPart(R("/summary"), { text: "" }),
+  ]);
+  const open = (polls.polls || []).filter((p) => p.open || p.voted_option);
+  $("#polls").innerHTML = open.length ? open.map((p) => `<div style="margin-bottom:.7rem"><b>${esc(p.question)}</b><div class="row">${(p.options || []).map((o) =>
     `<button class="${p.voted_option === o ? "" : "ghost"}" data-poll="${esc(p.id)}" data-opt="${esc(o)}" ${p.voted_option || !p.open ? "disabled" : ""} type="button">${esc(o)}${p.counts ? " (" + p.counts[o] + ")" : ""}</button>`).join("")}</div></div>`).join("") : "אין סקר פתוח.";
-  $("#questions").innerHTML = questions.questions.map((q) => `<li><button class="ghost" data-up="${esc(q.id)}" ${q.upvoted ? "disabled" : ""} type="button">▲ ${q.votes}</button> ${esc(q.text)}</li>`).join("");
-  $("#homework").innerHTML = homework.homework.map((h) => `<li><button class="ghost" data-hw="${esc(h.id)}" data-name="${esc(h.filename)}" type="button">⬇ ${esc(h.title)}</button> <span class="note">${esc(h.filename)}</span></li>`).join("") || '<li class="note">אין עדיין.</li>';
+  $("#questions").innerHTML = (questions.questions || []).map((q) => `<li><button class="ghost" data-up="${esc(q.id)}" ${q.upvoted ? "disabled" : ""} type="button">▲ ${q.votes}</button> ${esc(q.text)}</li>`).join("");
+  $("#homework").innerHTML = (homework.homework || []).map((h) => `<li><button class="ghost" data-hw="${esc(h.id)}" data-name="${esc(h.filename)}" type="button">⬇ ${esc(h.title)}</button> <span class="note">${esc(h.filename)}</span></li>`).join("") || '<li class="note">אין עדיין.</li>';
   if (summary.text) $("#summary").textContent = summary.text;
 }
 document.addEventListener("click", async (e) => {
@@ -213,5 +226,5 @@ $("#my-summary").addEventListener("click", async () => {
   await loadNames();
   if (session) await refreshMe(); else step("step-name");
   setInterval(refreshMe, 2000);
-  setInterval(() => refreshLesson().catch(() => {}), 3000);
+  setInterval(() => refreshLesson().catch(() => {}), 2000);
 }());

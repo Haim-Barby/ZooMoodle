@@ -148,9 +148,20 @@ $("#roster-file").addEventListener("change", async (event) => {
 });
 
 $("#poll-create").addEventListener("click", async () => {
-  const options = $("#poll-opts").value.split(",").map((s) => s.trim()).filter(Boolean);
-  await api("/api/rooms/" + state.roomId + "/polls", { method: "POST", body: JSON.stringify({ question: $("#poll-q").value, options, correct_option: $("#poll-correct").value.trim() || null }) });
-  $("#poll-q").value = ""; $("#poll-opts").value = ""; $("#poll-correct").value = ""; refreshDashboard();
+  const status = $("#poll-state");
+  status.textContent = "";
+  try {
+    await api("/api/rooms/" + state.roomId + "/polls", { method: "POST", body: JSON.stringify({ question: $("#poll-q").value, options: $("#poll-opts").value, correct_option: $("#poll-correct").value.trim() || null }) });
+    $("#poll-q").value = ""; $("#poll-opts").value = ""; $("#poll-correct").value = "";
+    status.textContent = "הסקר נפתח ונשלח לכיתה.";
+    refreshDashboard();
+  } catch (err) {
+    const messages = {
+      poll_needs_a_question_and_2_to_6_options: "צריך שאלה ו־2 עד 6 תשובות (מופרדות בפסיק, בקו נטוי, או בשורות נפרדות).",
+      correct_option_must_be_one_of_the_options: "התשובה הנכונה חייבת להיות אחת מהתשובות, או המספר שלה (1, 2, …).",
+    };
+    status.textContent = messages[err.message] || err.message;
+  }
 });
 
 $("#hw-upload").addEventListener("click", async () => {

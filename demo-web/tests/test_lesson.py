@@ -37,6 +37,33 @@ def test_poll_note_and_question_from_the_phone_reach_the_dashboard():
     assert signed(client, inside, "GET", f"/api/rooms/{room_id}/polls").json()["polls"][0]["open"] is False
 
 
+def test_poll_accepts_typed_separators_and_reaches_the_phone():
+    app, client = make_client()
+    room_id, headers, inside, remote = _students(app, client)
+
+    slash = client.post(f"/api/rooms/{room_id}/polls", json={"question": "1+1?", "options": "2 / 3", "correct_option": "1"}, headers=headers)
+    assert slash.status_code == 200, slash.text
+    assert slash.json()["options"] == ["2", "3"] and slash.json()["correct_option"] == "2" and slash.json()["open"] is True
+
+    hebrew = client.post(f"/api/rooms/{room_id}/polls", json={"question": "יש שאלה?", "options": "כן או לא", "correct_option": "כן"}, headers=headers)
+    assert hebrew.status_code == 200, hebrew.text
+    assert hebrew.json()["options"] == ["כן", "לא"]
+
+    lines = client.post(f"/api/rooms/{room_id}/polls", json={"question": "צבע?", "options": "אדום\nכחול\nירוק", "correct_option": "2"}, headers=headers)
+    assert lines.status_code == 200 and lines.json()["options"] == ["אדום", "כחול", "ירוק"] and lines.json()["correct_option"] == "כחול"
+
+    listed = signed(client, inside, "GET", f"/api/rooms/{room_id}/polls").json()["polls"]
+    open_questions = [p["question"] for p in listed if p["open"]]
+    assert open_questions == ["1+1?", "יש שאלה?", "צבע?"]
+
+    bad = client.post(f"/api/rooms/{room_id}/polls", json={"question": "חסר?", "options": "רק אחת", "correct_option": "רק אחת"}, headers=headers)
+    assert bad.status_code == 400 and bad.json()["error"] == "poll_needs_a_question_and_2_to_6_options"
+    mismatch = client.post(f"/api/rooms/{room_id}/polls", json={"question": "1+1?", "options": ["2", "3"], "correct_option": "4"}, headers=headers)
+    assert mismatch.status_code == 400 and mismatch.json()["error"] == "correct_option_must_be_one_of_the_options"
+
+
+
+
 def test_unsigned_or_pending_students_cannot_post():
     app, client = make_client()
     room_id, _headers = open_room(client)

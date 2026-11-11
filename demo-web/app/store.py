@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import time
 
@@ -16,6 +17,53 @@ from app.mailer import Mailer
 from app.roster import RoomRoster
 from app.screen_qr import ScreenQrService
 from app.session_keys import SessionBook
+
+
+
+_OPTION_SPLIT = re.compile(r"[,;|/،]\s*|\r?\n+")
+_OPTION_WORD_SPLIT = re.compile(r"\s+(?:או|or|vs\.?)\s+", re.IGNORECASE)
+
+
+def parse_poll_options(options) -> list[str]:
+    """Accept a list or a single string typed with commas, slashes, or 'או'."""
+    if isinstance(options, str):
+        parts = _split_option_text(options)
+    else:
+        parts = []
+        for option in options or []:
+            text = str(option).strip()
+            if not text:
+                continue
+            pieces = _split_option_text(text)
+            parts.extend(pieces if len(pieces) > 1 else [text])
+    cleaned: list[str] = []
+    for text in parts:
+        text = text.strip()
+        if text and text not in cleaned:
+            cleaned.append(text[:80])
+    return cleaned
+
+
+def _split_option_text(text: str) -> list[str]:
+    parts = [item.strip() for item in _OPTION_SPLIT.split(text) if item.strip()]
+    if len(parts) >= 2:
+        return parts
+    parts = [item.strip() for item in _OPTION_WORD_SPLIT.split(text) if item.strip()]
+    return parts if len(parts) >= 2 else ([text.strip()] if text.strip() else [])
+
+
+def resolve_correct_option(correct, options: list[str]) -> str | None:
+    if correct in (None, ""):
+        return None
+    text = str(correct).strip()
+    if text in options:
+        return text
+    if text.isdigit():
+        index = int(text)
+        if 1 <= index <= len(options):
+            return options[index - 1]
+    raise StoreError("correct_option_must_be_one_of_the_options")
+
 
 MAX_HOMEWORK_BYTES = 5 * 1024 * 1024
 
@@ -81,16 +129,11 @@ class Store:
     # ----- polls, notes, questions ---------------------------------------
     def add_poll(self, room: Room, question: str, options: list, correct) -> Poll:
         question = (question or "").strip()
-        cleaned: list[str] = []
-        for option in options or []:
-            text = str(option).strip()
-            if text and text not in cleaned:
-                cleaned.append(text[:80])
+        cleaned = parse_poll_options(options)
         if not question or len(cleaned) < 2 or len(cleaned) > 6:
             raise StoreError("poll_needs_a_question_and_2_to_6_options")
-        if correct not in (None, "") and correct not in cleaned:
-            raise StoreError("correct_option_must_be_one_of_the_options")
-        poll = Poll(id=secrets.token_hex(4), question=question[:200], options=cleaned, correct_option=correct or None)
+        correct_option = resolve_correct_option(correct, cleaned)
+        poll = Poll(id=secrets.token_hex(4), question=question[:200], options=cleaned, correct_option=correct_option)
         room.polls.append(poll)
         return poll
 

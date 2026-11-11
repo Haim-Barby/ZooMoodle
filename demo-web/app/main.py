@@ -329,7 +329,7 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
         lecturer(request)
         room = open_room(room_id)
         body = await _json(request)
-        poll = app.state.store.add_poll(room, str(body.get("question") or ""), list(body.get("options") or []), body.get("correct_option"))
+        poll = app.state.store.add_poll(room, str(body.get("question") or ""), body.get("options"), body.get("correct_option"))
         return _poll_dict(poll, lecturer=True)
 
     @app.post("/api/rooms/{room_id}/polls/{poll_id}/close")

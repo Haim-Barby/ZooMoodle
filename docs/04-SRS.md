@@ -13,7 +13,8 @@ One FastAPI process serves the lecturer page (`/`) and the student page (`/stude
 | Term | Meaning |
 | --- | --- |
 | Room | One lesson: roster, live barcode, check-ins, polls, notes, questions, homework, summary. |
-| Roster | The class list imported from CSV (names; e-mail kept only as a salted HMAC). |
+| Roster | The class list imported from CSV (names; e-mail kept as a salted HMAC, the plain address only in memory to send the one-time code). |
+| One-time code | 6 digits e-mailed to the roster address of a disputed name; stored only as an HMAC; 5 min, 3 tries per phone / 6 total, single use. |
 | Claim | One phone's attempt to be one roster name. Its state drives check-in (see the state diagram in [design](07-design.md)). |
 | Live barcode | A QR code signed with the room key that changes every 250 ms (one *slot*), inside a 20 Hz shimmering border. |
 | Campus ranges | Public IP ranges the university network leaves through (`192.114.48.0/21`, `192.114.56.0/23`). |
@@ -29,13 +30,13 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | --- | --- | --- | --- |
 | FR-1 | 1 | The lecturer signs in with the lecturer key. The server compares an HMAC of it in constant time, rate-limits failures (10 per 5 min) and returns a 12-hour session token and a greeting built from settings (demo: "שלום טום יניב, השבוע שבוע 4 בקורס מערכות נוירונים"). | M |
 | FR-2 | 1 | The lecturer opens a lesson room (default title "‹course› – שבוע ‹n›") and gets a student URL shown as a join QR. | M |
-| FR-3 | 1 | The lecturer imports a CSV roster (first/last name or full name, e-mail, optional group). The ID column is ignored. E-mails are stored only as salted HMAC. | M |
+| FR-3 | 1 | The lecturer imports a CSV roster (first/last name or full name, e-mail, optional group). The ID column is ignored. E-mails are stored as salted HMAC; the plain address only in server memory, for FR-9. | M |
 | FR-4 | 1 | The lecturer screen shows the live barcode: an HMAC-signed, room-bound QR per 250 ms slot and a 20 Hz shimmer border. | M |
 | FR-5 | 1 | A student picks a name from the roster and chooses in class or remote. No ID or e-mail is asked. Each join gets its own signed session. | M |
 | FR-6 | 1 | Remote: state `remote` (✓ remote). No network or barcode check. | M |
 | FR-7 | 1 | In class requires (a) the client IP inside the campus ranges, checked at join and again at scan, and (b) a barcode capture of ≥5 distinct codes spanning ≥2 s, each ≤6 s old by the server clock, in order, not reused for that name, from this room. Then the student picks one of 9 areas and becomes `present` with "ברוך הבא ‹name›". | M |
 | FR-8 | 1 | Client IP: forwarded headers are honoured only from trusted proxies; `CF-Connecting-IP` only from loopback; else the right-most untrusted `X-Forwarded-For` hop; never a body field. | M |
-| FR-9 | 1 | Duplicate names: (1) a verified in-class claim flags remote claims of the same name; (2) two verified in-class claims → both must re-pick; (3) the same name again → the lecturer decides. The lecturer can accept or reject any claim. | S |
+| FR-9 | 1 | Duplicate names are decided automatically: (1) a verified in-class claim flags remote claims of the same name; (2) two verified in-class claims → both must re-pick; (3) the same name again → a 6-digit one-time code is e-mailed (SMTP, e.g. Gmail) to that name's roster address (or `DEMO_EMAIL_OVERRIDE`); the first correct code wins and the other claims are rejected; (4) expiry (5 min) or all tries used (3 per phone / 6 total) → every claim on the name is rejected and the students start again. A phone that later re-picks a name proven by code is rejected. Without SMTP the code is shown only on the dashboard as "מצב הדגמה – המייל לא נשלח". The lecturer can accept or reject any claim by hand. | S |
 | FR-10 | 1 | **Online sheet:** the dashboard shows counts (in class, remote, in progress, conflicts), the list with ✓, a 3×3 map, conflicts. **Offline sheet:** CSV/XLSX export of name, mode, state, area, time. | M |
 | FR-11 | 3 | Polls: 2–6 options, optional correct answer, one answer per student, close poll. Students see counts only after voting or closing. | M |
 | FR-12 | 2 | Students in `present` or `remote` post notes and questions and up-vote questions. The dashboard lists notes and sorts questions by votes. | M |
@@ -54,9 +55,9 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | NFR-S1 | Security | Lecturer key 256 bits, from env or a mode-600 file, never printed or committed. | `test_lecturer.py` |
 | NFR-S2 | Security | Every student request after join is signed (HMAC-SHA256, timestamp ±60 s, single-use nonce). | `test_lesson.py::test_unsigned_or_pending_students_cannot_post` |
 | NFR-S3 | Security | LLM API keys are used for one request only: never stored, logged or returned. | `test_lesson.py`, `test_homework_review.py` |
-| NFR-PR1 | Privacy | No ID number stored; no e-mail in any response, list or export; the LLM sees pseudonyms and `[name]` only. | `test_emails_and_id_numbers_never_leave_the_server`, `test_lecturer_review_compares_anonymously_and_drops_the_key` |
+| NFR-PR1 | Privacy | No ID number stored; no e-mail in any response, list or export (only the code is sent to it); the one-time code is never in a student response and is stored only as an HMAC; the LLM sees pseudonyms and `[name]` only. | `test_emails_and_id_numbers_never_leave_the_server`, `test_lecturer_review_compares_anonymously_and_drops_the_key` |
 | NFR-A1 | Availability | In memory; a restart loses lessons (export first). A model failure returns an error, never invented text. | `test_agent.py` |
-| NFR-M1 | Maintainability | Automated tests ≥ 60, line coverage ≥ 80% (now 67 tests, 84%). | `pytest --cov` |
+| NFR-M1 | Maintainability | Automated tests ≥ 60, line coverage ≥ 80% (now 71 tests, 85%). | `pytest --cov` |
 
 ## 6. Threat model
 
@@ -67,7 +68,8 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | Live video relay from a classmate | Off-campus IPs are refused | A relay to someone else on the campus network (e.g. a dorm) |
 | Forged IP headers | Trusted-proxy rules (FR-8) | A compromised proxy |
 | Reused or forged codes | Per-slot HMAC with the room key, single use per name, room binding | Leaked master secret |
-| Picking a classmate's name | Duplicate stages; lecturer decision | An absent classmate's name picked in class is not detected unless they also join |
+| Picking a classmate's name | Re-pick, then a one-time code to the classmate's own e-mail | An absent classmate's name picked in class is not detected unless they also join |
+| Guessing the one-time code | 10^6 codes, 3 tries per phone / 6 total, 5 min, single use, HMAC-stored | A stolen mailbox |
 | Forged student requests | Per-session HMAC signature, timestamp and nonce | Stolen phone session |
 | Lecturer key guessing | 256-bit key, HMAC compare, rate limit | Key disclosure by the lecturer |
 | Data leakage to the LLM | Pseudonyms, name redaction, read-only tools | Personal details a student writes inside a free-text answer |

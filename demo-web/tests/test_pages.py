@@ -13,5 +13,5 @@ def test_pages_are_hebrew_and_have_no_legacy_flow():
         for legacy in ("fsk", "hotspot", "ultrasonic", "presence helper", "דוא״ל שלך"):
             assert legacy not in lowered
     js = client.get("/static/student.js").text
-    assert "x-zoomoodle-signature" in js and "/barcode" in js and "/repick" in js
+    assert "x-zoomoodle-signature" in js and "/barcode" in js and "/repick" in js and "/email-code" in js
     assert client.get("/static/fsk.js").status_code == 404

@@ -32,10 +32,10 @@ def make_settings(**overrides) -> Settings:
     return Settings(**values)
 
 
-def make_client(settings=None, peer=None):
+def make_client(settings=None, mailer=None, peer=None):
     from app.main import create_app
 
-    app = create_app(settings or make_settings())
+    app = create_app(settings or make_settings(), mailer=mailer)
     client = TestClient(app, client=(peer or "10.1.2.3", 50000))
     return app, client
 

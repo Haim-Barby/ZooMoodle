@@ -3,8 +3,8 @@
 Tests map to the classes in the [design](07-design.md) and the requirement ids in the [SRS](04-SRS.md). Run from `demo-web/`:
 
 ```bash
-python -m pytest -q                      # 67 tests
-python -m pytest -q --cov=app            # line coverage (84% on 15 Nov 2026)
+python -m pytest -q                      # 71 tests
+python -m pytest -q --cov=app            # line coverage (85% on 15 Nov 2026)
 ```
 
 ## 1. Layers
@@ -12,9 +12,9 @@ python -m pytest -q --cov=app            # line coverage (84% on 15 Nov 2026)
 | Layer | Proves | How | Count |
 | --- | --- | --- | --- |
 | Unit | Barcode signing, liveness, freshness, room binding; client-IP rules; LLM adapters; agent loop; Hebrew similarity | `test_screen_qr.py`, `test_net.py`, `test_llm_connection.py`, `test_agent.py`, part of `test_homework_review.py` | 24 |
-| API / integration | Full flows through `create_app` with a test client whose peer is a trusted proxy; fake LLM providers that follow the real tool-calling loop | `test_lecturer.py`, `test_checkin.py`, `test_duplicates.py`, `test_lesson.py`, `test_homework_review.py`, `test_pages.py`, `test_render_blueprint.py` | 43 |
+| API / integration | Full flows through `create_app` with a test client whose peer is a trusted proxy; fake LLM providers that follow the real tool-calling loop | `test_lecturer.py`, `test_checkin.py`, `test_duplicates.py`, `test_lesson.py`, `test_homework_review.py`, `test_pages.py`, `test_render_blueprint.py` | 47 |
 | Load | A 150-student hall checks in; the dashboard stays fast (NFR-P1) | `test_checkin.py::test_a_class_of_150_checks_in_quickly` | (in API count) |
-| Browser (manual) | Real pages in headless Chrome: sign-in, roster, live barcode, student submissions, review error path | [`tests/manual/browser_run.py`](../demo-web/tests/manual/browser_run.py) (Playwright), not in the suite | — |
+| Browser (manual) | Real pages in headless Chrome: sign-in, roster, live barcode, student submissions, review error path; duplicate name → re-pick → code box → right code wins → other phone rejected → start over | [`tests/manual/browser_run.py`](../demo-web/tests/manual/browser_run.py), [`tests/manual/browser_duplicates.py`](../demo-web/tests/manual/browser_duplicates.py) (Playwright), not in the suite | — |
 | Real life | Real phones, campus Wi-Fi, live model | [Demo script](10-demo-script.md), table in the [tools report](02-tools-report.md#5-real-life-checks) | — |
 
 ## 2. Test design rules
@@ -34,7 +34,7 @@ python -m pytest -q --cov=app            # line coverage (84% on 15 Nov 2026)
 | FR-6 remote | `CheckinBook` | `test_checkin.py::test_remote_path_needs_no_network_or_barcode` |
 | FR-7 in class = network + live barcode + area | `CheckinBook`, `ScreenQrService` | `test_checkin.py`: happy path, out-of-range IP, network re-checked at scan, still photo / short, other room + replay, bad area |
 | FR-8 client IP | `net.client_ip` | `test_checkin.py`: spoofed headers, forged left-most hop, cloudflared on loopback; `test_net.py` (7) |
-| FR-9 duplicates (3 stages) | `CheckinBook` | `test_duplicates.py` (5): in class beats remote, re-pick resolves, same name again → lecturer, third phone on a decided name, lecturer accept/reject |
+| FR-9 duplicates + one-time code | `CheckinBook`, `EmailChallenge`, `Mailer` | `test_duplicates.py` (9): in class beats remote, re-pick resolves, same name again → e-mail code and the right code wins (other rejected), wrong codes reject all, expiry rejects all, a re-pick of a code-proven name is rejected, lecturer accept/reject, SMTP to the demo override, SMTP to the roster address |
 | FR-10 online/offline sheet | `main`, `ExportService` | counts and zones in the check-in tests; CSV/XLSX in the privacy test |
 | FR-11, FR-12 polls, notes, questions | `Store` | `test_lesson.py::test_poll_note_and_question_from_the_phone_reach_the_dashboard`, `test_poll_accepts_typed_separators_and_reaches_the_phone`, `test_unsigned_or_pending_students_cannot_post` |
 | FR-13 homework files | `Store`, `HomeworkFile` | `test_lesson.py::test_lecturer_uploads_homework_and_students_view_it` |
@@ -48,16 +48,17 @@ python -m pytest -q --cov=app            # line coverage (84% on 15 Nov 2026)
 | Module | Line coverage |
 | --- | --- |
 | `checkin.py` | 93% |
+| `mailer.py` | 87% |
 | `store.py` | 90% |
 | `screen_qr.py` | 88% |
 | `main.py` | 88% |
 | `llm/agent.py` | 98% |
 | `llm/providers.py` | 80% |
 | `llm/tools.py` | 61% (transcript time filters and attention tools are not exercised) |
-| **Total** | **84%** |
+| **Total** | **85%** |
 
 ## 5. Exit criteria
 
 - `pytest` exits 0 and total coverage stays ≥ 80%.
-- A failure in check-in, duplicate, privacy or key-handling tests blocks the demo.
+- A failure in check-in, duplicate/e-mail-code, privacy or key-handling tests blocks the demo.
 - A green suite does not replace the real-life checks in the tools report.

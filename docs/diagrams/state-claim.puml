@@ -14,13 +14,18 @@ remote --> flagged_remote : same name verified in class\nor picked remotely agai
 needs_area --> repick : another verified in-class\nclaim on the same name
 present --> repick : another verified in-class\nclaim on the same name
 repick --> present : repick(other free name)
-repick --> lecturer_decision : repick(same name again)
+repick --> email_code : repick(same name again)\n/ one-time code to the roster e-mail
+email_code --> present : submit_code(correct)
+email_code --> rejected : other phone typed the code /\nexpired (5 min) / 3 wrong tries
 
 flagged_remote --> remote : lecturer accept
 flagged_remote --> rejected : lecturer reject
-lecturer_decision --> present : lecturer accept
-lecturer_decision --> rejected : lecturer reject\n(or name given to other)
 
+note right of email_code
+  Decided automatically:
+  whoever owns the e-mail
+  (e.g. Gmail) gets the name
+end note
 present : ✓ in class
 remote : ✓ remote
 rejected --> [*]

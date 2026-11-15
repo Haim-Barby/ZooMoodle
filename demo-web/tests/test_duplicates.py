@@ -1,3 +1,5 @@
+from app.config import Settings
+from app.mailer import Mailer
 from tests.conftest import (
     HOME_IP,
     ROSTER,
@@ -5,6 +7,7 @@ from tests.conftest import (
     entry_id,
     join,
     make_client,
+    make_settings,
     open_room,
     signed,
 )
@@ -62,36 +65,79 @@ def test_two_in_class_with_one_name_get_a_repick_popup_and_can_resolve():
     assert dash["counts"]["in_class"] == 2 and dash["conflicts"] == []
 
 
-def test_same_name_after_a_repick_goes_to_the_lecturer():
+def test_same_name_again_sends_an_email_code_and_the_right_code_wins():
     app, client = make_client()
     room_id, headers = open_room(client)
     a, b = _two_in_class_same_name(app, client, room_id)
     _repick(client, room_id, a, "דנה לוי")
     stage = _repick(client, room_id, b, "דנה לוי").json()
-    assert stage["state"] == "lecturer_decision"
-    assert _me(client, room_id, a)["state"] == "lecturer_decision"
+    assert stage["state"] == "email_code"
+    assert _me(client, room_id, a)["state"] == "email_code"
+    conflict = _dash(client, room_id, headers)["conflicts"][0]
+    # No SMTP in tests: demo mode shows the code to the lecturer only.
+    assert conflict["email"]["demo_label"] == "מצב הדגמה – המייל לא נשלח"
+    code = conflict["email"]["demo_code"]
+    assert len(code) == 6 and code.isdigit()
+    assert code not in signed(client, a, "GET", f"/api/rooms/{room_id}/me").text
+    wrong = "000000" if code != "000000" else "111111"
+    assert signed(client, b, "POST", f"/api/rooms/{room_id}/email-code", {"code": wrong}).status_code == 401
+    ok = signed(client, client_creds := a, "POST", f"/api/rooms/{room_id}/email-code", {"code": code})
+    assert ok.status_code == 200 and ok.json()["state"] == "present"
+    # Decided automatically: the other phone is rejected, no lecturer needed.
+    assert _me(client, room_id, b)["state"] == "rejected"
     dash = _dash(client, room_id, headers)
-    assert dash["counts"]["conflicts"] == 2 and dash["counts"]["in_class"] == 0
-    conflict = dash["conflicts"][0]
-    assert conflict["name"] == "דנה לוי" and set(conflict) == {"name", "claims"}
-    # Lecturer asks in class and gives the name to B.
-    claim_b = _me(client, room_id, b)["claim_id"]
-    decided = client.post(f"/api/rooms/{room_id}/conflicts/decide", json={"claim_id": claim_b, "action": "accept"}, headers=headers)
-    assert decided.json()["state"] == "present"
-    assert _me(client, room_id, a)["state"] == "rejected"
-    dash = _dash(client, room_id, headers)
-    assert dash["counts"]["in_class"] == 1 and dash["conflicts"] == []
+    assert dash["counts"]["in_class"] == 1 and dash["counts"]["conflicts"] == 0
+    # Single use.
+    again = signed(client, client_creds, "POST", f"/api/rooms/{room_id}/email-code", {"code": code})
+    assert again.status_code == 409
 
 
-def test_a_third_phone_on_a_decided_name_goes_to_the_lecturer():
+def test_wrong_codes_reject_every_claim_on_the_name():
     app, client = make_client()
     room_id, headers = open_room(client)
     a, b = _two_in_class_same_name(app, client, room_id)
     _repick(client, room_id, a, "דנה לוי")
     _repick(client, room_id, b, "דנה לוי")
-    client.post(f"/api/rooms/{room_id}/conflicts/decide", json={"claim_id": a["claim_id"], "action": "accept"}, headers=headers)
+    code = _dash(client, room_id, headers)["conflicts"][0]["email"]["demo_code"]
+    wrong = "000000" if code != "000000" else "111111"
+    for creds in (a, b):
+        for _ in range(3):
+            signed(client, creds, "POST", f"/api/rooms/{room_id}/email-code", {"code": wrong})
+    assert _me(client, room_id, a)["state"] == "rejected"
+    assert _me(client, room_id, b)["state"] == "rejected"
+    late = signed(client, a, "POST", f"/api/rooms/{room_id}/email-code", {"code": code})
+    assert late.status_code in (409, 429)
+    dash = _dash(client, room_id, headers)
+    assert dash["counts"]["in_class"] == 0 and dash["conflicts"] == []
+    # The students start again from the name list.
+    again = check_in_class(app, client, room_id, "דנה לוי")
+    assert _me(client, room_id, again)["state"] == "present"
+
+
+def test_code_expiry_rejects_every_claim_on_the_name():
+    app, client = make_client()
+    room_id, headers = open_room(client)
+    a, b = _two_in_class_same_name(app, client, room_id)
+    _repick(client, room_id, a, "דנה לוי")
+    _repick(client, room_id, b, "דנה לוי")
+    book = app.state.store.get(room_id).checkin
+    for challenge in book.challenges.values():
+        challenge.expires_at = 0
+    assert _me(client, room_id, a)["state"] == "rejected"
+    assert _me(client, room_id, b)["state"] == "rejected"
+
+
+def test_a_phone_that_repicks_a_name_proven_by_code_is_rejected():
+    app, client = make_client()
+    room_id, headers = open_room(client)
+    a, b = _two_in_class_same_name(app, client, room_id)
+    _repick(client, room_id, a, "דנה לוי")
+    _repick(client, room_id, b, "דנה לוי")
+    code = _dash(client, room_id, headers)["conflicts"][0]["email"]["demo_code"]
+    signed(client, a, "POST", f"/api/rooms/{room_id}/email-code", {"code": code})
     c = check_in_class(app, client, room_id, "דנה לוי")
     assert _me(client, room_id, c)["state"] == "repick"
+    assert _repick(client, room_id, c, "דנה לוי").json()["state"] == "rejected"
     assert _me(client, room_id, a)["state"] == "present"
 
 
@@ -107,3 +153,61 @@ def test_lecturer_can_accept_a_flagged_remote_or_reject_it():
     assert _me(client, room_id, second)["state"] == "rejected"
     assert client.post(f"/api/rooms/{room_id}/conflicts/decide", json={"claim_id": first["claim_id"], "action": "x"}, headers=headers).status_code == 400
     assert client.post(f"/api/rooms/{room_id}/conflicts/decide", json={"claim_id": first["claim_id"], "action": "reject"}).status_code == 401
+
+
+class FakeSMTP:
+    sent = []
+
+    def __init__(self, host, port):
+        self.host, self.port = host, port
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def login(self, user, password):
+        self.user = user
+
+    def send_message(self, message):
+        FakeSMTP.sent.append(message)
+
+
+def test_smtp_mode_sends_to_the_demo_override_and_hides_the_code():
+    FakeSMTP.sent = []
+    settings = make_settings(
+        smtp_host="smtp.example.test",
+        smtp_port=587,
+        smtp_user="bot@example.test",
+        smtp_password="app-password",
+        smtp_from="bot@example.test",
+        demo_email_override="demo-inbox@example.test",
+    )
+    mailer = Mailer(settings, smtp_factory=FakeSMTP)
+    app, client = make_client(settings, mailer=mailer)
+    room_id, headers = open_room(client)
+    a, b = _two_in_class_same_name(app, client, room_id)
+    _repick(client, room_id, a, "דנה לוי")
+    _repick(client, room_id, b, "דנה לוי")
+    assert len(FakeSMTP.sent) == 1
+    message = FakeSMTP.sent[0]
+    assert message["To"] == "demo-inbox@example.test"
+    body = message.get_content()
+    code = next(token for token in body.split() if token.isdigit() and len(token) == 6)
+    conflict = _dash(client, room_id, headers)["conflicts"][0]
+    assert conflict["email"]["sent"] is True and "demo_code" not in conflict["email"]
+    assert _me(client, room_id, b)["email_sent"] is True
+    ok = signed(client, b, "POST", f"/api/rooms/{room_id}/email-code", {"code": code})
+    assert ok.json()["state"] == "present"
+
+
+def test_without_override_the_code_goes_to_the_roster_address():
+    FakeSMTP.sent = []
+    settings = make_settings(smtp_host="smtp.example.test", smtp_from="bot@example.test")
+    app, client = make_client(settings, mailer=Mailer(settings, smtp_factory=FakeSMTP))
+    room_id, _ = open_room(client)
+    a, b = _two_in_class_same_name(app, client, room_id)
+    _repick(client, room_id, a, "דנה לוי")
+    _repick(client, room_id, b, "דנה לוי")
+    assert FakeSMTP.sent[0]["To"] == "dana@example.test"

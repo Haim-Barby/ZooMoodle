@@ -6,13 +6,14 @@ skinparam packageStyle rectangle
 actor Lecturer
 actor Student
 actor "LLM provider" as LLM
+actor "Mail (Gmail)" as MAIL
 
 rectangle "ZooMoodle" {
   usecase "UC-1 Sign in with key" as UC1
   usecase "UC-2 Open lesson,\nimport roster,\nproject join QR + live barcode" as UC2
   usecase "UC-3 Join remotely" as UC3
   usecase "UC-4 Check in from class\n(campus Wi-Fi + live barcode)" as UC4
-  usecase "UC-5 Resolve duplicate name" as UC5
+  usecase "UC-5 Resolve duplicate name\n(re-pick, then e-mail code)" as UC5
   usecase "UC-6 Decide a conflict" as UC6
   usecase "UC-7 Poll" as UC7
   usecase "UC-8 Notes and questions" as UC8
@@ -38,7 +39,8 @@ Student --> UC9
 Student --> UC10
 Student --> UC12
 UC4 <.. UC5 : <<extend>>
-UC5 ..> UC6 : <<include>>\n(stage 3)
+UC5 --> MAIL
+UC6 ..> UC5 : <<extend>>\n(manual override)
 UC10 --> LLM
 UC12 --> LLM
 @enduml

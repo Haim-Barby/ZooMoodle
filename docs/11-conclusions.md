@@ -6,7 +6,7 @@ All five assignment features are in the demo app:
 
 | # | Feature | Result |
 | --- | --- | --- |
-| 1 | Attendance + spreadsheet | Two-factor in-class check-in (campus network + live barcode), remote join, three-stage duplicate names, live dashboard, CSV/Excel export. |
+| 1 | Attendance + spreadsheet | Two-factor in-class check-in (campus network + live barcode), remote join, automatic duplicate names (re-pick, then a one-time code to the student's Gmail), live dashboard, CSV/Excel export. |
 | 2 | Comments | Notes, questions and up-votes from the phone. |
 | 3 | Polls | Created in seconds, answered from the phone, live counts. |
 | 4 | Lesson summary | Agent summary from the Zoom/Meet transcript plus polls and questions, published to the class. |
@@ -14,9 +14,9 @@ All five assignment features are in the demo app:
 
 | Environment | Command | Result |
 | --- | --- | --- |
-| Linux, Python 3.13, 15 Nov 2026 | `python -m pytest -q --cov=app` | 67 passed, 84% line coverage |
+| Linux, Python 3.13, 15 Nov 2026 | `python -m pytest -q --cov=app` | 71 passed, 85% line coverage |
 | Linux, in-process, 15 Nov 2026 | 150-student load test | ~10 ms per full check-in, 6 ms dashboard |
-| Headless Chrome against a local server, 15 Nov 2026 | `tests/manual/browser_run.py` | sign-in, roster, live barcode (README GIF), two submissions, review error path — as specified |
+| Headless Chrome against a local server, 15 Nov 2026 | `tests/manual/browser_run.py`, `browser_duplicates.py` | sign-in, roster, live barcode (README GIF), two submissions, review error path; duplicate name → code → automatic decision → start over — as specified |
 | Headless Chrome, 11 Nov 2026 | earlier manual run | in-class check-in with real screen codes, still-photo rejection, duplicate popup |
 
 ## 2. How the design changed
@@ -26,7 +26,7 @@ All five assignment features are in the demo app:
 | 3 Nov | Ultrasonic FSK tone from the laptop + rotating QR | The tone was not decoded reliably from a projector speaker in a noisy room. |
 | 8 Nov | Lecturer hotspot + local verifier, last 4 ID digits | Setup on every laptop; students lose Internet; ID digits are personal data a friend knows. |
 | 11 Nov | **Campus network + live barcode** | The server decides the IP; the barcode cannot be passed on as a photo. Simple for the student: one scan. |
-| 15 Nov | Same, scope trimmed | Removed the e-mailed one-time code for duplicate names (the lecturer decides instead) and the diagram endpoint; re-enabled the homework review that feature 5 asks for. |
+| 15 Nov | Same, scope trimmed | Removed the diagram endpoint and the private student summary; re-enabled the homework review that feature 5 asks for; duplicate names now end with a one-time code to the student's e-mail and are decided automatically (no lecturer step). |
 
 ## 3. Lessons learned
 
@@ -38,7 +38,7 @@ All five assignment features are in the demo app:
 
 ## 4. Limits and remaining work
 
-- Not yet tried with a real phone camera on a projector, on the real campus Wi-Fi through Render, or with a live model (planned 16–23 Nov).
+- Not yet tried with a real phone camera on a projector, on the real campus Wi-Fi through Render, with real Gmail delivery, or with a live model (planned 16–23 Nov).
 - A live video relay to someone else on the campus network can still pass.
 - An absent student's name can be used in class if nobody else claims it; the lecturer sees the list and the class map.
 - The lesson summary uses the transcript, not the video itself.
@@ -52,7 +52,7 @@ All five assignment features are in the demo app:
 | Date, room, phones | | |
 | Greeting | | |
 | In class (Wi-Fi + scan) / off-campus refused / screenshot refused | | |
-| Duplicate name stages | | |
+| Duplicate name → Gmail code → automatic decision | | |
 | Poll, note, question | | |
 | Homework review, lesson summary (live model) | | |
 | Export | | |

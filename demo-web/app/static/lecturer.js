@@ -126,7 +126,11 @@ function renderConflicts(list) {
   const box = $("#conflicts");
   if (!list.length) { box.textContent = "אין כרגע."; return; }
   box.innerHTML = list.map((c) => {
-    return `<div class="card"><b>${esc(c.name)}</b><ul class="plain">${c.claims.map((k) => `<li>
+    const email = c.email || null;
+    const emailHtml = !email || !email.open ? "" : email.demo_code
+      ? `<p class="warn">${esc(email.demo_label)}: <span class="demo-code">${esc(email.demo_code)}</span> (פג בעוד ${email.expires_in} שנ׳)</p>`
+      : `<p class="note">נשלח קוד חד־פעמי למייל של השם (פג בעוד ${email.expires_in} שנ׳). מי שמקליד אותו מקבל את השם.</p>`;
+    return `<div class="card"><b>${esc(c.name)}</b>${emailHtml}<ul class="plain">${c.claims.map((k) => `<li>
       ${k.mode === "in_class" ? "בכיתה" : "מרחוק"} · ${esc(k.state_text)} ${k.zone ? "· " + esc(ZONE_HE[k.zone]) : ""}
       <button data-decide="${esc(k.claim_id)}" data-action="accept" type="button">זה הוא</button>
       <button class="bad" data-decide="${esc(k.claim_id)}" data-action="reject" type="button">דחה</button></li>`).join("")}</ul></div>`;

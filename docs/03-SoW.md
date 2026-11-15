@@ -12,7 +12,7 @@ Design, and demo in class in 10 minutes, a simple phone-based teaching tool whos
 
 | Feature | Included |
 | --- | --- |
-| 1. Attendance | Lecturer key sign-in with the course greeting, lesson rooms, roster CSV import, join QR, two-factor in-class check-in (campus network + live barcode), remote join, classroom area, three-stage duplicate-name resolution, live dashboard, CSV/XLSX export |
+| 1. Attendance | Lecturer key sign-in with the course greeting, lesson rooms, roster CSV import, join QR, two-factor in-class check-in (campus network + live barcode), remote join, classroom area, automatic duplicate-name resolution (re-pick, then a one-time code to the student's e-mail), live dashboard, CSV/XLSX export |
 | 2. Comments | Notes and questions from the phone, question up-votes |
 | 3. Polls | 2–6 options, optional correct answer, live counts, close |
 | 4. Summary | Transcript upload, LLM agent summary (or a manual one) published to the class |
@@ -37,7 +37,8 @@ Design, and demo in class in 10 minutes, a simple phone-based teaching tool whos
 | 10 | Demo web app, first version (FSK + hotspot) | 3–8 Nov | Replaced |
 | 10 | Demo web app, final version (network + live barcode) | 11 Nov | Done |
 | 10 | Feature 5 re-enabled, scope trimmed | 15 Nov | Done |
-| — | Real phones on campus Wi-Fi, live LLM, fill the tools report | 16–23 Nov | Owner |
+| 10 | One-time e-mail code (Gmail) for duplicate names restored; automatic decision | 15 Nov | Done |
+| — | Real phones on campus Wi-Fi, Gmail delivery, live LLM, fill the tools report | 16–23 Nov | Owner |
 | — | Submission | 25 Nov | |
 | 11 | Classroom demo | Lesson after submission | Owner |
 | 12 | Conclusions with classroom results | After the demo | Draft done |
@@ -57,6 +58,7 @@ Design, and demo in class in 10 minutes, a simple phone-based teaching tool whos
 | Student uses cellular data in class | High | The page tells them to switch to campus Wi-Fi or join remotely. |
 | A classmate live-streams the barcode to a dorm on the campus network | Low | Accepted residual; the lecturer sees the list and the class map. |
 | Camera blocked without HTTPS | Medium | Use Render or cloudflared. |
+| Gmail blocks the sign-in or the code goes to spam | Medium | Use an App Password; test before class; `DEMO_EMAIL_OVERRIDE` to one inbox; without SMTP the code shows on the dashboard. |
 | No LLM key available in the demo | Medium | Manual summary path; features 4–5 shown with a prepared key. |
 | Server restarts (Render free plan sleeps) | Medium | Open the site before class; export the sheet before finishing. |
 
@@ -64,7 +66,7 @@ Design, and demo in class in 10 minutes, a simple phone-based teaching tool whos
 
 - Wrong lecturer key → refused; right key → the greeting.
 - In class needs both the campus network and a 2 s live scan; a screenshot or an off-campus IP is refused. Remote join needs neither.
-- Duplicate names follow the three stages; the lecturer can always decide.
+- Duplicate names: re-pick, then a one-time code to the roster e-mail; the right code wins automatically, a failed code rejects all claims; the lecturer can still override.
 - The sheet downloads as CSV and Excel with name, mode, state, area and time — no e-mail and no ID.
 - A student can comment, ask, vote, answer a poll, submit homework and get a review from the phone.
 - All automated tests pass; real-life results are recorded in the tools report.

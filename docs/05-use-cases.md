@@ -39,12 +39,20 @@ Source: `docs/diagrams/usecases.puml`. Each use case starts with the client stor
 **Accept:** all alternatives above refuse the check-in; forged forwarding headers do not help. (FR-7, FR-8)
 
 ## UC-5 Duplicate name
-**Story:** As a lecturer, I want two phones that claim one name to be sorted out automatically where possible, so that I only step in when I must.
-**Accept:** remote vs. verified in class → remote flagged. Two in class → both see a re-pick popup; one picking another name resolves it. Same name again → the lecturer decides (UC-6). (FR-9)
+**Story:** As a lecturer, I want two phones that claim one name to be sorted out automatically, so that I do not stop the lesson. As a student, I want to prove the name is mine with my own e-mail, so that a classmate cannot take it.
 
-## UC-6 Lecturer decides a conflict
-**Story:** As a lecturer, I want to give a disputed name to the right phone, so that the sheet is correct.
-**Accept:** the conflict appears on the dashboard; "זה הוא" gives the name and rejects the other claims; "דחה" shows "לא אושר" on that phone. (FR-9)
+| | |
+| --- | --- |
+| Precondition | Two phones verified in class (UC-4) with the same name. |
+| Main flow | 1. The system shows both phones a re-pick popup. 2. Both pick the same name again. 3. The system e-mails a 6-digit one-time code to that name's address from the class list (e.g. Gmail). 4. Both phones show "אימות במייל" with a code box. 5. The real owner types the code. 6. The system gives them the name ("ברוך הבא") and rejects the other phone ("לא אושר"). |
+| Alternatives | 2a. One phone picks another free name → both are resolved, no e-mail. 5a. Wrong code → "הקוד שגוי", up to 3 tries per phone. 5b. 5 minutes pass or all tries are used → every claim on the name is rejected; the students press "התחל מחדש". 3a. No SMTP configured → the code is shown only on the lecturer dashboard ("מצב הדגמה – המייל לא נשלח"). |
+| Postcondition | At most one phone holds the name; no lecturer action was needed. |
+
+**Accept:** remote vs. verified in class → remote flagged; the code is never in a student response; the right code wins, the other phone is rejected; failure rejects all. (FR-9)
+
+## UC-6 Lecturer overrides a conflict
+**Story:** As a lecturer, I want to be able to give a disputed name to the right phone by hand, so that the sheet is correct even when the automatic flow is not enough (e.g. a flagged remote claim).
+**Accept:** open conflicts appear on the dashboard; "זה הוא" gives the name and rejects the other claims; "דחה" shows "לא אושר" on that phone. (FR-9)
 
 ## UC-7 Poll
 **Story:** As a lecturer, I want to ask a quick question and see the answers live, so that I know whether the class understood.

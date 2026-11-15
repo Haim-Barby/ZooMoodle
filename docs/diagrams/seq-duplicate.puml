@@ -1,11 +1,12 @@
 @startuml seq-duplicate
-title Duplicate name – two phones in class claim "Dana Levi"
+title Duplicate name – two phones in class claim "Dana Levi" (decided automatically)
 
 actor "Phone A" as A
 actor "Phone B" as B
 participant "HTTP API" as API
 participant CheckinBook as CB
-actor Lecturer
+participant Mailer as Mail
+participant "Gmail\n(SMTP)" as Gmail
 
 A -> API : join + live scan as "Dana"
 API -> CB : submit_barcode(A)
@@ -26,12 +27,15 @@ else both pick "Dana" again
   B -> API : repick("Dana")
   API -> CB : repick(B, Dana)
   CB -> CB : already re-picked -> stage 3
-  CB --> API : A, B -> lecturer_decision
-  API --> Lecturer : dashboard: conflict "Dana" (A, B)
-  Lecturer -> Lecturer : asks in class
-  Lecturer -> API : decide(A, accept)
-  API -> CB : decide
+  CB -> Mail : send_code(roster e-mail of Dana, 6 digits)
+  Mail -> Gmail : SMTP (smtp.gmail.com, App Password)
+  CB --> API : A, B -> email_code
+  API --> A : "enter the code from your e-mail"
+  API --> B : "enter the code from your e-mail"
+  A -> API : email-code(123456)
+  API -> CB : submit_code(A) [HMAC match, <5 min, <3 tries]
   CB --> API : A present, B rejected
-  API --> B : "not approved"
+  API --> B : "not approved – start over"
+  note over CB : expiry or all tries used ->\nevery claim on "Dana" rejected
 end
 @enduml

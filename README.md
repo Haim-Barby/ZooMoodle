@@ -41,15 +41,18 @@ Each factor alone is weak: a dorm is on the campus network, and a friend can sen
 
 **Student flow (one screen per step):** scan the join QR → pick your name → **בכיתה** (both checks, then choose your area in the room) or **מרחוק** (no checks) → *✓ ברוך הבא ‹name›*. No ID number and no e-mail are ever asked.
 
-**Duplicate names** are resolved in three stages:
+**Duplicate names** are resolved automatically, in stages:
 
 | Stage | Situation | What happens |
 | --- | --- | --- |
 | 1 | The same name is used remotely and verified in class | In class wins; the remote entry is flagged for the lecturer. |
 | 2 | Two verified in-class phones choose one name | Both get a popup and re-pick their real name. |
-| 3 | They pick the same name again | The lecturer decides on the dashboard (and asks in class). |
+| 3 | They pick the same name again | A **one-time code** (6 digits) is e-mailed to that student's address from the class list (e.g. their Gmail). Whoever types it gets the name; the other phone is rejected. No lecturer needed. |
+| 4 | Nobody types the right code (5 min, 3 tries per phone) | Every claim on that name is rejected; the students start again from the name list. |
 
-**Privacy.** The roster's ID column is ignored and never stored; e-mails are kept only as salted HMACs and never shown or exported. The lecturer key is never printed or committed, and each phone signs its requests with its own session key. LLM API keys are used for one request and dropped; the model only sees pseudonyms (`P-1a2b3c4d`).
+The lecturer can still accept or reject any claim by hand.
+
+**Privacy.** The roster's ID column is ignored and never stored. E-mails are stored as salted HMACs; the plain address stays only in server memory to send the one-time code, and is never shown, returned or exported. The code itself is stored only as an HMAC. The lecturer key is never printed or committed, and each phone signs its requests with its own session key. LLM API keys are used for one request and dropped; the model only sees pseudonyms (`P-1a2b3c4d`).
 
 ## 4. Run it
 
@@ -63,8 +66,9 @@ python -m app.main            # http://127.0.0.1:8000/
 
 - The lecturer key is created at `~/.zoomoodle/lecturer-key.txt` (mode 600) on first start; only the path is printed.
 - Phones need **HTTPS** for the camera: deploy on Render (`demo-web/render.yaml`) or run `cloudflared tunnel --url http://127.0.0.1:8000`, and open the lecturer page through that URL.
+- **One-time codes by Gmail:** in `.env` (or the Render dashboard) set `ZOOMODLE_SMTP_HOST=smtp.gmail.com`, `ZOOMODLE_SMTP_USER` / `ZOOMODLE_SMTP_FROM` = the sending Gmail address, and `ZOOMODLE_SMTP_PASSWORD` = a Gmail **App Password** (Google Account → Security → 2-Step Verification → App passwords). `DEMO_EMAIL_OVERRIDE` sends every code to one inbox for the demo. Without SMTP the code is shown on the lecturer dashboard as "מצב הדגמה – המייל לא נשלח".
 - To try the in-class path at home, add your own address to `ZOOMODLE_CAMPUS_RANGES` in `.env` (local browser: `127.0.0.1/32`).
-- Tests: `python -m pytest -q` from `demo-web/` (67 tests).
+- Tests: `python -m pytest -q` from `demo-web/` (71 tests).
 - State is in memory: export the sheet before stopping the server. Proxy/IP details: [components](docs/06-components.md#client-ip-behind-a-proxy).
 
 ## 5. Assignment deliverables
@@ -83,4 +87,4 @@ python -m app.main            # http://127.0.0.1:8000/
 | 11 | 10-minute demo script | [docs/10-demo-script.md](docs/10-demo-script.md) |
 | 12 | Conclusions | [docs/11-conclusions.md](docs/11-conclusions.md) |
 
-**Still to verify in class:** a real phone camera on the projected barcode, the campus Wi-Fi as seen from Render, and a live LLM call. Results go in the [tools report](docs/02-tools-report.md#5-real-life-checks).
+**Still to verify in class:** a real phone camera on the projected barcode, the campus Wi-Fi as seen from Render, real Gmail delivery of the one-time code, and a live LLM call. Results go in the [tools report](docs/02-tools-report.md#5-real-life-checks).

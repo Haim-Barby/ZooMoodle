@@ -35,7 +35,7 @@ The assignment suggests a photo + automatic head count. We chose a different way
 | Factor | What the student must have | How it is checked | What it stops |
 | --- | --- | --- | --- |
 | **1. University network** | The phone is on the campus Wi-Fi | The **server** reads the phone's real public IP and requires it to be in the university ranges (`192.114.48.0/21`, `192.114.56.0/23`). Nothing the phone sends can change it. | Checking in from home or over cellular data |
-| **2. Live barcode** (the GIF above) | The phone's camera sees the lecturer's screen *now* | The screen shows a signed QR that **changes every 250 ms** inside a 20 Hz shimmering border. The phone must hold on it for **2 s** and collect **≥5 different codes**, each ≤6 s old, from this room, never used before. | A photo or screenshot sent by a friend (holds one code only), a recording replayed later, a code from another lesson |
+| **2. Live barcode** (the GIF above) | The phone's camera sees the lecturer's screen *now* | The screen shows a signed QR that **changes every 250 ms** inside a 20 Hz shimmering border. The phone must hold on it for **2 s** and collect **≥5 different codes**, each ≤3 s old, from this room, never used before. | A photo or screenshot sent by a friend (holds one code only), a recording replayed later, a code from another lesson |
 
 Each factor alone is weak: a dorm is on the campus network, and a friend can send a photo. **Together** a student must be on campus *and* see the live screen — in practice, in the room.
 
@@ -68,7 +68,7 @@ python -m app.main            # http://127.0.0.1:8000/
 - Phones need **HTTPS** for the camera: deploy on Render (`demo-web/render.yaml`) or run `cloudflared tunnel --url http://127.0.0.1:8000`, and open the lecturer page through that URL.
 - **One-time codes by Gmail:** in `.env` (or the Render dashboard) set `ZOOMODLE_SMTP_HOST=smtp.gmail.com`, `ZOOMODLE_SMTP_USER` / `ZOOMODLE_SMTP_FROM` = the sending Gmail address, and `ZOOMODLE_SMTP_PASSWORD` = a Gmail **App Password** (Google Account → Security → 2-Step Verification → App passwords). `DEMO_EMAIL_OVERRIDE` sends every code to one inbox for the demo. Without SMTP the code is shown on the lecturer dashboard as "מצב הדגמה – המייל לא נשלח".
 - To try the in-class path at home, add your own address to `ZOOMODLE_CAMPUS_RANGES` in `.env` (local browser: `127.0.0.1/32`).
-- Tests: `python -m pytest -q` from `demo-web/` (71 tests).
+- Tests: `python -m pytest -q` from `demo-web/` (73 tests).
 - State is in memory: export the sheet before stopping the server. Proxy/IP details: [components](docs/06-components.md#client-ip-behind-a-proxy).
 
 ## 5. Assignment deliverables
@@ -76,15 +76,15 @@ python -m app.main            # http://127.0.0.1:8000/
 | To-do | Item | File |
 | --- | --- | --- |
 | 1 | Problem and scope | this README |
-| 3 | Tools report (incl. vibe-coded vs. composed) | [docs/02-tools-report.md](docs/02-tools-report.md) |
-| 4 | Statement of work | [docs/03-SoW.md](docs/03-SoW.md) |
-| 5 | SRS and threat model | [docs/04-SRS.md](docs/04-SRS.md) |
-| 6 | Use cases (client stories) | [docs/05-use-cases.md](docs/05-use-cases.md) |
-| 7 | Software components | [docs/06-components.md](docs/06-components.md) |
-| 8 | Class, state and sequence diagrams, OOD | [docs/07-design.md](docs/07-design.md) |
-| 9 | Testing strategy (mapped to classes) | [docs/08-testing-strategy.md](docs/08-testing-strategy.md) |
-| 10 | Demo web app | [`demo-web/`](demo-web/) |
-| 11 | 10-minute demo script | [docs/10-demo-script.md](docs/10-demo-script.md) |
-| 12 | Conclusions | [docs/11-conclusions.md](docs/11-conclusions.md) |
+| 2 | Tools report (incl. vibe-coded vs. composed) | [docs/02-tools-report.md](docs/02-tools-report.md) |
+| 3 | Statement of work | [docs/03-SoW.md](docs/03-SoW.md) |
+| 4 | SRS and threat model | [docs/04-SRS.md](docs/04-SRS.md) |
+| 5 | Use cases (client stories) | [docs/05-use-cases.md](docs/05-use-cases.md) |
+| 6 | Software components | [docs/06-components.md](docs/06-components.md) |
+| 7 | Class, state and sequence diagrams, OOD | [docs/07-design.md](docs/07-design.md) |
+| 8 | Testing strategy (mapped to classes) | [docs/08-testing-strategy.md](docs/08-testing-strategy.md) |
+| 9 | Demo web app | [`demo-web/`](demo-web/) |
+| 10 | 10-minute demo script | [docs/10-demo-script.md](docs/10-demo-script.md) |
+| 11 | Conclusions | [docs/11-conclusions.md](docs/11-conclusions.md) |
 
 **Still to verify in class:** a real phone camera on the projected barcode, the campus Wi-Fi as seen from Render, real Gmail delivery of the one-time code, and a live LLM call. Results go in the [tools report](docs/02-tools-report.md#5-real-life-checks).

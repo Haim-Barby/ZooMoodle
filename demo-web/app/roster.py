@@ -227,10 +227,3 @@ class RoomRoster:
         """Server-side only: the address the one-time code goes to."""
         entry = self.entries.get(entry_id or "")
         return entry.email if entry else ""
-
-    def email_matches(self, entry_id: str, email: str) -> bool:
-        entry = self.entries.get(entry_id or "")
-        if entry is None:
-            return False
-        got = email_mac(self.master, entry.salt, entry.id, email)
-        return hmac.compare_digest(got, entry.verifier)

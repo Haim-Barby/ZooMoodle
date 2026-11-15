@@ -13,7 +13,7 @@ A `Room` owns a `RoomRoster`, a `ScreenQrService`, a `CheckinBook`, a `SessionBo
 | Lecturer key | `zmk_` + 32 random bytes; server keeps HMAC-SHA256(master, key) |
 | Room key | HMAC-SHA256(master, `zoomoodle-room-v2` ‖ 16 random bytes) |
 | Barcode code | `ZM1.` + slot ‖ nonce ‖ HMAC(room key, room id ‖ slot ‖ nonce)[:16]; slot = 250 ms |
-| Liveness | ≥5 distinct codes, ≥2 s span, increasing slots, gap ≤3 slots, ≤6 s old at receipt |
+| Liveness | ≥5 distinct codes, ≥2 s span, increasing slots, gap ≤3 slots, ≤3 s old at receipt |
 | Network | client IP in `192.114.48.0/21`, `192.114.56.0/23` (configurable) |
 | Session | 32-byte secret → HKDF verifier; requests signed over method, path, body, time (±60 s), nonce |
 | One-time code | 6 digits, HMAC with salt, 5 min, 3 tries per phone / 6 total, single use; failure → all claims rejected |
@@ -28,7 +28,7 @@ A `Room` owns a `RoomRoster`, a `ScreenQrService`, a `CheckinBook`, a `SessionBo
 | **State** (explicit state machine) | `Claim.state`, transitions only in `CheckinBook` | Check-in has many paths (remote, in class, conflicts). One owner of the transitions keeps every path testable; see the state diagram below. |
 | **Adapter** | `BaseProvider` → `OpenAICompatibleProvider`, `AnthropicProvider`, `GeminiProvider` behind `LLMClient` | Each vendor has a different API and tool-call format; the agent sees one `complete(messages, tools)`. A new vendor is one new subclass. |
 | **Facade** | `Store` | The HTTP layer calls one object for rooms, polls, notes, homework and the snapshot, not five collections. |
-| **Strategy / Template** | `LessonAgent.run(task)` with `SummaryService` and `HomeworkReviewService` | One tool-calling loop; the task decides the goal and the report schema. Feature 5 reused the loop instead of a second one. |
+| **Strategy / Template** | `LessonAgent.run(task)` with `SummaryService` and `HomeworkReviewService` | One tool-calling loop; the task decides the goal and the report schema. Features 4 and 5 share the loop. |
 | **Command (tool calls)** | `ToolRegistry.dispatch(name, args)` | The model asks for named, read-only commands; it cannot touch state, and every finding can cite the tool output. |
 | **Factory** | `build_provider(config)`, `Settings.from_env()` | Build the right object from configuration in one place; tests inject fakes (`app.state.provider_factory`). |
 | **Composition over inheritance** | `Room` *owns* its roster, check-in book, barcode service and sessions | A room's parts have one life cycle; no class hierarchy is needed for the domain. |
@@ -40,10 +40,10 @@ A `Room` owns a `RoomRoster`, a `ScreenQrService`, a `CheckinBook`, a `SessionBo
 - **Dependency inversion:** `CheckinBook` gets its roster and barcode service in the constructor; the agent gets an `LLMClient` from a factory. Tests pass fakes for both.
 - **Interface segregation:** the agent sees `ToolRegistry`'s small read-only interface, not `Store`.
 
-### Two decisions changed during the work
+### Two design decisions
 
-- Duplicate names are **decided automatically** (15 Nov): after a re-pick, a one-time code goes to the student's own e-mail from the class list (Gmail SMTP). The right code wins and the others are rejected; a failed code rejects everyone. The earlier "lecturer decides" end state was removed — the lecturer only overrides by hand. Ownership of the e-mail is a fair, automatic tie-breaker that does not stop the lesson.
-- The homework review (feature 5) was **re-enabled** by reusing the existing agent and tools — the patterns above made it one service class, three routes and two UI cards.
+- Duplicate names are **decided automatically**: after a re-pick, a one-time code goes to the student's own e-mail from the class list (Gmail SMTP). The right code wins and the others are rejected; a failed code rejects everyone. The lecturer can still override by hand. Ownership of the e-mail is a fair, automatic tie-breaker that does not stop the lesson.
+- The homework review (feature 5) **reuses the lesson agent and its tools**: the patterns above make it one service class, three routes and two UI cards.
 
 ## 3. Claim state machine
 

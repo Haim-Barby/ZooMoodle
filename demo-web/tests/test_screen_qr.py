@@ -56,3 +56,18 @@ def test_code_is_bound_to_its_room():
     with pytest.raises(ScreenQrError) as err:
         service.verify_sequence(KEY, "other-room", _codes(service))
     assert err.value.reason == "qr_mismatch"
+
+
+def test_codes_older_than_three_seconds_are_rejected():
+    # A 2 s capture (slots 100..108) whose oldest code is 3.25 s old on arrival.
+    service = _service(100 * 0.25 + 3.25)
+    with pytest.raises(ScreenQrError) as err:
+        service.verify_sequence(KEY, "r1", _codes(service))
+    assert err.value.reason == "qr_stale"
+    assert service.public_params()["qr_max_age_seconds"] == 3.0
+
+
+def test_a_capture_sent_right_after_the_two_second_hold_passes():
+    # Oldest code 2.75 s old on arrival: inside the 3 s window.
+    service = _service(100 * 0.25 + 2.75)
+    assert len(service.verify_sequence(KEY, "r1", _codes(service))) == 9

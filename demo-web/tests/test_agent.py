@@ -47,13 +47,6 @@ def _snapshot():
             {"id": "hw_a", "pseudonym": "P-aaaaaaaa", "text": "HMAC is a keyed hash."},
             {"id": "hw_b", "pseudonym": "P-bbbbbbbb", "text": "A hash is not the same as HMAC."},
         ],
-        "attention": {
-            "empty": False,
-            "disclaimer": "stub",
-            "source": "sample-not-camera",
-            "zones": {},
-            "samples": [{"t_seconds": 120, "zone": "back-right", "level": 0.2, "source": "sample-not-camera"}],
-        },
     }
 
 

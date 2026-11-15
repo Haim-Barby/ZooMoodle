@@ -71,17 +71,6 @@ class ToolRegistry:
                 },
             ),
             ToolSpec(
-                "get_attention_by_zone",
-                "Anonymous attention aggregates by seat zone. Optional start_seconds and end_seconds. Empty means the camera path was not run.",
-                {
-                    "type": "object",
-                    "properties": {
-                        "start_seconds": {"type": "number"},
-                        "end_seconds": {"type": "number"},
-                    },
-                },
-            ),
-            ToolSpec(
                 "list_comments",
                 "Anonymized comments and suggestions for this room.",
                 {"type": "object", "properties": {}},
@@ -124,7 +113,6 @@ class ToolRegistry:
         handler = {
             "get_transcript_segment": self._transcript,
             "get_poll_results": self._polls,
-            "get_attention_by_zone": self._attention,
             "list_comments": self._comments,
             "list_homework_ids": self._homework_ids,
             "get_homework": self._homework,
@@ -193,41 +181,6 @@ class ToolRegistry:
                 item["by_zone"] = zones
             rendered.append(item)
         return {"empty": False, "polls": rendered}
-
-    def _attention(self, arguments: dict) -> dict:
-        attention = self.snapshot.get("attention") or {}
-        # The snapshot is already aggregated for the whole lesson. A time filter
-        # is applied when the snapshot carries raw samples.
-        samples = attention.get("samples") or []
-        if not samples:
-            return {
-                "empty": attention.get("empty", True),
-                "disclaimer": attention.get("disclaimer", ""),
-                "zones": attention.get("zones") or {},
-                "source": attention.get("source", "none"),
-            }
-        start = arguments.get("start_seconds")
-        end = arguments.get("end_seconds")
-        chosen = []
-        for sample in samples:
-            if start is not None and sample["t_seconds"] < float(start):
-                continue
-            if end is not None and sample["t_seconds"] > float(end):
-                continue
-            chosen.append(sample)
-        buckets: dict[str, list[float]] = {}
-        for sample in chosen:
-            buckets.setdefault(sample["zone"], []).append(sample["level"])
-        zones = {
-            zone: {"mean_level": round(sum(values) / len(values), 3), "samples": len(values)}
-            for zone, values in sorted(buckets.items())
-        }
-        return {
-            "empty": not chosen,
-            "disclaimer": attention.get("disclaimer", ""),
-            "source": "sample-not-camera" if chosen else "none",
-            "zones": zones,
-        }
 
     def _comments(self, _arguments: dict) -> dict:
         comments = self.snapshot.get("comments") or []

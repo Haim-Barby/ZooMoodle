@@ -43,7 +43,7 @@ Source: `docs/diagrams/components.puml`.
 
 The campus check (factor 1) depends on reading the phone's real public IP, which arrives through a proxy:
 
-- Forwarded headers are trusted only from `ZOOMODLE_TRUSTED_PROXIES`.
-- `CF-Connecting-IP` is accepted only from loopback (cloudflared on the same laptop).
-- Otherwise the right-most `X-Forwarded-For` hop that is not a trusted proxy is used — on Render, the hop Render's proxy appended. A browser-supplied left-most hop is ignored.
+- Forwarded headers are trusted only when the socket peer is in `ZOOMODLE_TRUSTED_PROXIES` (loopback for cloudflared; on Render also the private ranges of Render's proxy, see `render.yaml`).
+- From a trusted peer the server uses `CF-Connecting-IP` / `True-Client-IP`. Cloudflare sets and overwrites these headers, both for cloudflared and in front of Render.
+- If they are missing, it takes the right-most `X-Forwarded-For` hop that is neither a trusted proxy nor a Cloudflare address. A browser-supplied left-most hop is ignored.
 - On Render set `ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_KEY` in the dashboard; `FORWARDED_ALLOW_IPS` stays `127.0.0.1`.

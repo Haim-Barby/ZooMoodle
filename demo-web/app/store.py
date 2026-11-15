@@ -264,6 +264,5 @@ class Store:
             "homework": [
                 {"id": s.id, "pseudonym": pseudonym(s.student_id), "text": clean(s.text)} for s in room.submissions
             ],
-            "attention": {"empty": True, "zones": {}, "source": "none", "disclaimer": "No camera data in this demo.", "samples": []},
         }
         return snapshot, names, ids

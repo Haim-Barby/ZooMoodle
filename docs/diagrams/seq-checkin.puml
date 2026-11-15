@@ -25,11 +25,11 @@ Student -> UI : hold camera 2 s on live barcode
 UI -> API : signed POST /barcode {codes}
 API -> NET : campus check again
 API -> CB : submit_barcode
-CB -> QR : verify_sequence\n(>=5 codes, 2 s, <=6 s old, room, order)
+CB -> QR : verify_sequence\n(>=5 codes, 2 s, <=3 s old, room, order)
 QR --> CB : ok / qr_static / qr_short / qr_stale
 CB -> CB : single use + resolve duplicate name
 alt name conflict
-  CB --> UI : flagged_remote / repick / lecturer_decision
+  CB --> UI : flagged_remote / repick / email_code
 else free
   API --> UI : needs_area
   Student -> UI : pick area

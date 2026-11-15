@@ -7,3 +7,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .coverage
+# Class lists and assignment files stay out of git
+*participants*.csv
+*.docx

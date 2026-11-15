@@ -5,8 +5,9 @@ centre changes about every 250 milliseconds, and a border around it
 shimmers many times a second. A student must keep the camera on that
 live pattern for about two seconds. The server, not the phone clock,
 checks each decoded frame for freshness when it arrives, and also
-checks that the frames actually changed over those two seconds. A
-checkmark still needs the local network verifier as well.
+checks that the frames actually changed over those two seconds. Every
+code must be at most 3 seconds old when it reaches the server and is
+single-use. A checkmark also needs the campus-network check (net.py).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import time
 from dataclasses import dataclass
 
 FRAME_SECONDS = 0.25
-MAX_AGE_SECONDS = 6.0
+MAX_AGE_SECONDS = 3.0
 HOLD_SECONDS = 2.0
 MIN_DISTINCT = 5
 MAX_GAP_SLOTS = 3

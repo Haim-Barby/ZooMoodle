@@ -18,7 +18,7 @@ services:
       - key: ZOOMODLE_MASTER_SECRET
         generateValue: true
       # The one lecturer key. Reveal it in the Dashboard; startup never prints it.
-      # (An older service that only has ZOOMODLE_LECTURER_TOKEN keeps working: it is used as the key.)
+      # ZOOMODLE_LECTURER_TOKEN is accepted as the same key.
       - key: ZOOMODLE_LECTURER_KEY
         generateValue: true
       # University public ranges for the in-class network check.

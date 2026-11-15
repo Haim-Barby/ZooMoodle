@@ -34,8 +34,8 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | FR-4 | 1 | The lecturer screen shows the live barcode: an HMAC-signed, room-bound QR per 250 ms slot and a 20 Hz shimmer border. | M |
 | FR-5 | 1 | A student picks a name from the roster and chooses in class or remote. No ID or e-mail is asked. Each join gets its own signed session. | M |
 | FR-6 | 1 | Remote: state `remote` (✓ remote). No network or barcode check. | M |
-| FR-7 | 1 | In class requires (a) the client IP inside the campus ranges, checked at join and again at scan, and (b) a barcode capture of ≥5 distinct codes spanning ≥2 s, each ≤6 s old by the server clock, in order, not reused for that name, from this room. Then the student picks one of 9 areas and becomes `present` with "ברוך הבא ‹name›". | M |
-| FR-8 | 1 | Client IP: forwarded headers are honoured only from trusted proxies; `CF-Connecting-IP` only from loopback; else the right-most untrusted `X-Forwarded-For` hop; never a body field. | M |
+| FR-7 | 1 | In class requires (a) the client IP inside the campus ranges, checked at join and again at scan, and (b) a barcode capture of ≥5 distinct codes spanning ≥2 s, each ≤3 s old by the server clock, in order, not reused for that name, from this room. Then the student picks one of 9 areas and becomes `present` with "ברוך הבא ‹name›". | M |
+| FR-8 | 1 | Client IP: forwarded headers are honoured only from trusted proxies (loopback, and Render's private proxy ranges). From a trusted proxy the server uses `CF-Connecting-IP` / `True-Client-IP` (set by Cloudflare); otherwise the right-most `X-Forwarded-For` hop that is neither a trusted proxy nor a Cloudflare address; never a body field. | M |
 | FR-9 | 1 | Duplicate names are decided automatically: (1) a verified in-class claim flags remote claims of the same name; (2) two verified in-class claims → both must re-pick; (3) the same name again → a 6-digit one-time code is e-mailed (SMTP, e.g. Gmail) to that name's roster address (or `DEMO_EMAIL_OVERRIDE`); the first correct code wins and the other claims are rejected; (4) expiry (5 min) or all tries used (3 per phone / 6 total) → every claim on the name is rejected and the students start again. A phone that later re-picks a name proven by code is rejected. Without SMTP the code is shown only on the dashboard as "מצב הדגמה – המייל לא נשלח". The lecturer can accept or reject any claim by hand. | S |
 | FR-10 | 1 | **Online sheet:** the dashboard shows counts (in class, remote, in progress, conflicts), the list with ✓, a 3×3 map, conflicts. **Offline sheet:** CSV/XLSX export of name, mode, state, area, time. | M |
 | FR-11 | 3 | Polls: 2–6 options, optional correct answer, one answer per student, close poll. Students see counts only after voting or closing. | M |
@@ -57,14 +57,14 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | NFR-S3 | Security | LLM API keys are used for one request only: never stored, logged or returned. | `test_lesson.py`, `test_homework_review.py` |
 | NFR-PR1 | Privacy | No ID number stored; no e-mail in any response, list or export (only the code is sent to it); the one-time code is never in a student response and is stored only as an HMAC; the LLM sees pseudonyms and `[name]` only. | `test_emails_and_id_numbers_never_leave_the_server`, `test_lecturer_review_compares_anonymously_and_drops_the_key` |
 | NFR-A1 | Availability | In memory; a restart loses lessons (export first). A model failure returns an error, never invented text. | `test_agent.py` |
-| NFR-M1 | Maintainability | Automated tests ≥ 60, line coverage ≥ 80% (now 71 tests, 85%). | `pytest --cov` |
+| NFR-M1 | Maintainability | Automated tests ≥ 60, line coverage ≥ 80% (now 73 tests, 85%). | `pytest --cov` |
 
 ## 6. Threat model
 
 | Threat | Mitigation | Residual |
 | --- | --- | --- |
-| Student at home gets a photo of the barcode | Codes change every 250 ms; ≥5 distinct over 2 s; 6 s freshness; campus network required | — (a photo holds one code; home is off campus) |
-| Video of the screen replayed later | 6 s freshness; single use per name | A replay within 6 s from the campus network |
+| Student at home gets a photo of the barcode | Codes change every 250 ms; ≥5 distinct over 2 s; 3 s freshness; campus network required | — (a photo holds one code; home is off campus) |
+| Video of the screen replayed later | 3 s freshness; single use per name | A replay within 3 s from the campus network |
 | Live video relay from a classmate | Off-campus IPs are refused | A relay to someone else on the campus network (e.g. a dorm) |
 | Forged IP headers | Trusted-proxy rules (FR-8) | A compromised proxy |
 | Reused or forged codes | Per-slot HMAC with the room key, single use per name, room binding | Leaked master secret |

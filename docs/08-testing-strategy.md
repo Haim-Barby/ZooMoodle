@@ -3,7 +3,7 @@
 Tests map to the classes in the [design](07-design.md) and the requirement ids in the [SRS](04-SRS.md). Run from `demo-web/`:
 
 ```bash
-python -m pytest -q                      # 71 tests
+python -m pytest -q                      # 73 tests
 python -m pytest -q --cov=app            # line coverage (85% on 15 Nov 2026)
 ```
 
@@ -11,7 +11,7 @@ python -m pytest -q --cov=app            # line coverage (85% on 15 Nov 2026)
 
 | Layer | Proves | How | Count |
 | --- | --- | --- | --- |
-| Unit | Barcode signing, liveness, freshness, room binding; client-IP rules; LLM adapters; agent loop; Hebrew similarity | `test_screen_qr.py`, `test_net.py`, `test_llm_connection.py`, `test_agent.py`, part of `test_homework_review.py` | 24 |
+| Unit | Barcode signing, liveness, freshness, room binding; client-IP rules; LLM adapters; agent loop; Hebrew similarity | `test_screen_qr.py`, `test_net.py`, `test_llm_connection.py`, `test_agent.py`, part of `test_homework_review.py` | 26 |
 | API / integration | Full flows through `create_app` with a test client whose peer is a trusted proxy; fake LLM providers that follow the real tool-calling loop | `test_lecturer.py`, `test_checkin.py`, `test_duplicates.py`, `test_lesson.py`, `test_homework_review.py`, `test_pages.py`, `test_render_blueprint.py` | 47 |
 | Load | A 150-student hall checks in; the dashboard stays fast (NFR-P1) | `test_checkin.py::test_a_class_of_150_checks_in_quickly` | (in API count) |
 | Browser (manual) | Real pages in headless Chrome: sign-in, roster, live barcode, student submissions, review error path; duplicate name → re-pick → code box → right code wins → other phone rejected → start over | [`tests/manual/browser_run.py`](../demo-web/tests/manual/browser_run.py), [`tests/manual/browser_duplicates.py`](../demo-web/tests/manual/browser_duplicates.py) (Playwright), not in the suite | — |
@@ -29,7 +29,7 @@ python -m pytest -q --cov=app            # line coverage (85% on 15 Nov 2026)
 | Requirement | Class | Tests |
 | --- | --- | --- |
 | FR-1 key sign-in, greeting | `LecturerAuth`, `Settings` | `test_lecturer.py` (8): greeting, wrong key + rate limit, session required, key file mode 600, Render refuses without secrets, key never printed |
-| FR-2, FR-4 room, barcode | `Store`, `ScreenQrService` | `test_checkin.py::test_barcode_frame_is_lecturer_only_and_signed`, `test_screen_qr.py` (5) |
+| FR-2, FR-4 room, barcode | `Store`, `ScreenQrService` | `test_checkin.py::test_barcode_frame_is_lecturer_only_and_signed`, `test_screen_qr.py` (7, incl. the 3 s age limit) |
 | FR-3, FR-5 roster, no ID/e-mail at entry | `RoomRoster` | `test_checkin.py::test_no_id_or_email_is_asked_at_entry`, `test_lesson.py::test_emails_and_id_numbers_never_leave_the_server` |
 | FR-6 remote | `CheckinBook` | `test_checkin.py::test_remote_path_needs_no_network_or_barcode` |
 | FR-7 in class = network + live barcode + area | `CheckinBook`, `ScreenQrService` | `test_checkin.py`: happy path, out-of-range IP, network re-checked at scan, still photo / short, other room + replay, bad area |
@@ -54,7 +54,7 @@ python -m pytest -q --cov=app            # line coverage (85% on 15 Nov 2026)
 | `main.py` | 88% |
 | `llm/agent.py` | 98% |
 | `llm/providers.py` | 80% |
-| `llm/tools.py` | 61% (transcript time filters and attention tools are not exercised) |
+| `llm/tools.py` | 69% (transcript time filters are not exercised) |
 | **Total** | **85%** |
 
 ## 5. Exit criteria

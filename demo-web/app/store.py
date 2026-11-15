@@ -11,9 +11,8 @@ import time
 
 from app.checkin import CheckinBook
 from app.config import Settings
-from app.domain import SEAT_ZONES, Comment, HomeworkFile, Poll, Question
+from app.domain import SEAT_ZONES, Comment, HomeworkFile, Poll, Question, Submission
 from app.llm.tools import pseudonym, redact
-from app.mailer import Mailer
 from app.roster import RoomRoster
 from app.screen_qr import ScreenQrService
 from app.session_keys import SessionBook
@@ -66,6 +65,7 @@ def resolve_correct_option(correct, options: list[str]) -> str | None:
 
 
 MAX_HOMEWORK_BYTES = 5 * 1024 * 1024
+MAX_SUBMISSION_CHARS = 100_000
 
 
 class StoreError(Exception):
@@ -80,7 +80,7 @@ def derive_room_key(master: bytes, salt: bytes) -> bytes:
 
 
 class Room:
-    def __init__(self, room_id: str, title: str, key: bytes, settings: Settings, mailer: Mailer):
+    def __init__(self, room_id: str, title: str, key: bytes, settings: Settings):
         self.id = room_id
         self.title = title
         self.key = key
@@ -88,21 +88,21 @@ class Room:
         self.closed = False
         self.roster = RoomRoster(settings.master_secret)
         self.screen_qr = ScreenQrService()
-        self.checkin = CheckinBook(settings.master_secret, self.roster, self.screen_qr, mailer, settings.course_name)
+        self.checkin = CheckinBook(self.roster, self.screen_qr)
         self.sessions = SessionBook()
         self.polls: list[Poll] = []
         self.comments: list[Comment] = []
         self.questions: list[Question] = []
         self.homework: list[HomeworkFile] = []
+        self.submissions: list[Submission] = []
         self.transcript = ""
         self.summary = ""
         self.summary_source = ""
 
 
 class Store:
-    def __init__(self, settings: Settings, mailer: Mailer | None = None):
+    def __init__(self, settings: Settings):
         self.settings = settings
-        self.mailer = mailer or Mailer(settings)
         self.rooms: dict[str, Room] = {}
 
     def create_room(self, title: str) -> Room:
@@ -111,7 +111,7 @@ class Store:
         room_id = secrets.token_hex(4)
         while room_id in self.rooms:
             room_id = secrets.token_hex(4)
-        room = Room(room_id, title, derive_room_key(self.settings.master_secret, os.urandom(16)), self.settings, self.mailer)
+        room = Room(room_id, title, derive_room_key(self.settings.master_secret, os.urandom(16)), self.settings)
         self.rooms[room_id] = room
         return room
 
@@ -199,6 +199,29 @@ class Store:
         room.homework.append(item)
         return item
 
+    # ----- homework submissions (feature 5: LLM review) ------------------------
+    def submit_homework(self, room: Room, student_id: str, text: str, filename: str) -> Submission:
+        text = (text or "").strip()
+        if not text:
+            raise StoreError("missing_submission")
+        if len(text) > MAX_SUBMISSION_CHARS:
+            raise StoreError("submission_too_large", 413)
+        safe_name = "".join(ch for ch in os.path.basename(filename or "") if ch not in '\\/:*?"<>|\r\n')[:120]
+        # One submission per student: a new one replaces the old one.
+        room.submissions = [s for s in room.submissions if s.student_id != student_id]
+        item = Submission(
+            id="sub_" + secrets.token_hex(4), student_id=student_id, filename=safe_name or "answer.txt", text=text, at=time.time()
+        )
+        room.submissions.append(item)
+        return item
+
+    @staticmethod
+    def submission(room: Room, submission_id: str) -> Submission:
+        item = next((s for s in room.submissions if s.id == submission_id), None)
+        if item is None:
+            raise StoreError("unknown_submission", 404)
+        return item
+
     # ----- summary input -----------------------------------------------------
     def snapshot(self, room: Room) -> tuple[dict, list[str], list[str]]:
         names = []
@@ -236,7 +259,9 @@ class Store:
                 {"id": q.id, "pseudonym": pseudonym(q.student_id), "text": "שאלה: " + clean(q.text), "votes": len(q.upvotes)}
                 for q in room.questions
             ],
-            "homework": [],
+            "homework": [
+                {"id": s.id, "pseudonym": pseudonym(s.student_id), "text": clean(s.text)} for s in room.submissions
+            ],
             "attention": {"empty": True, "zones": {}, "source": "none", "disclaimer": "No camera data in this demo.", "samples": []},
         }
         return snapshot, names, ids

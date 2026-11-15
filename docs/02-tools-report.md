@@ -1,43 +1,68 @@
 # Technical tools report
 
-What was chosen for the demo, and what was actually run.
+What was considered, what was chosen, what was written by an AI agent ("vibe-coded") and what was taken ready-made ("composed"), and what was tested in real life.
 
-## Choices
+## 1. The key decision: how to prove "in class"
+
+This was the main design question (feature 1), so several tools were tried before the final choice.
+
+| Candidate | Tried? | Result | Kept? |
+| --- | --- | --- | --- |
+| Photo of the class + automatic head count (assignment example) | Considered | Gives *how many*, not *who*; needs a vision model per lesson; a count alone cannot fill a named sheet. | No — our sheet is per student. A head count stays a possible add-on. |
+| GPS / browser location | Considered | Location is easy to fake in the browser; indoor accuracy is poor. | No |
+| Ultrasonic FSK beacon (laptop speaker → phone mic) | Built (commit `c0dd887`) | Never decoded reliably from a projector speaker to a phone in a noisy room. | Removed |
+| Lecturer hotspot + local verifier | Built (commits `65250d0`–`2c10ddf`) | Needs setup on every lecturer laptop; students lose Internet while connected. | Removed |
+| Last 4 digits of the ID number | Built, then removed | Personal data; a friend knows it. | Removed |
+| **University network (server-side IP) + live barcode** | **Built and kept** | IP is decided by the server, not the phone; a 250 ms signed QR cannot be passed on as a photo. Together: on campus **and** looking at the screen. | **Yes** |
+
+## 2. Tool choices
 
 | Concern | Candidates | Choice | Why |
 | --- | --- | --- | --- |
-| Backend | FastAPI, Flask, Django | FastAPI + Uvicorn | Small JSON API, file uploads, static pages, a test client. |
-| Lecturer sign-in | Password, university SSO, random key | One 256-bit random key, HMAC-compared, exchanged for a session token | No account system needed; the key is never committed or printed. |
-| In-class proof | GPS, own hotspot + local verifier, ultrasonic FSK, university network + live barcode | University network (server-side IP) + live flickering barcode | GPS is spoofable in the browser. A hotspot needs setup on every laptop. FSK was never verified from a speaker to a phone. The IP is decided by the server, and a live barcode defeats photos. |
-| Barcode | Static QR, rotating QR, signed rotating QR with shimmer | Signed QR every 250 ms + 20 Hz shimmer, 2 s hold, ≥5 codes | Looks and behaves like video; a screenshot holds one code only. |
-| QR in the browser | jsQR, ZXing, BarcodeDetector | jsQR (bundled) to read, own `qr.js` to draw | Works offline on iOS and Android browsers; no CDN. |
-| Crypto | `hmac`, `cryptography` | HMAC-SHA256 + HKDF (`cryptography`) | Room keys, barcode MACs, session signing, hashed emails and codes. |
-| Duplicate-name e-mail | Provider SDK, SMTP | `smtplib` with env settings, demo fallback | Works with any mailbox app password; nothing to install. |
-| Spreadsheet | CSV, openpyxl, pandas | CSV + openpyxl | Enough for a lecturer sheet. |
-| HTTPS for phones | cloudflared, ngrok, Render | cloudflared locally, Render for hosting | The phone camera requires a secure page. |
-| LLM | One vendor SDK, small adapter | Adapter for OpenAI, Anthropic, Gemini, xAI (and compatible URLs) | The key is optional and given per request. |
-| Tests | pytest, Playwright | pytest; Playwright + Chrome used once by hand | API and logic in CI; a real browser for the pages. |
-| Diagrams | PlantUML, drawing tool | PlantUML sources with SVG exports | Text diffs in git. |
+| Backend | FastAPI, Flask, Django | FastAPI + Uvicorn | Small JSON API, uploads, static pages, a built-in test client. |
+| Front end | React, plain HTML/JS | Plain HTML + JS, RTL Hebrew | KISS: no build step, opens on any phone browser. |
+| Lecturer sign-in | Password, university SSO, random key | One 256-bit random key → short session token | No account system (guideline 1). |
+| QR in the browser | jsQR, ZXing, BarcodeDetector | jsQR (bundled) to read, own `qr.js` to draw | Works on iOS and Android, offline, no CDN. |
+| Crypto | `hmac`, `cryptography` | HMAC-SHA256 + HKDF | Room keys, barcode signatures, request signing, hashed e-mails. |
+| Spreadsheet | CSV, openpyxl, pandas | CSV + openpyxl | Enough for the lecturer's sheet (online = dashboard, offline = file). |
+| HTTPS for phones | cloudflared, ngrok, Render | Render for hosting, cloudflared locally | The phone camera needs a secure page. |
+| Video summary input | Video file → speech-to-text, Zoom/Meet transcript | **Transcript file (VTT/TXT)** | Zoom/Meet already export it; uploading a 1-hour video and running speech-to-text is slow and costly. The summary uses the transcript *plus* polls and questions, which Zoom's own summary does not see. |
+| LLM | One vendor SDK, small adapter | Own adapter: OpenAI, Anthropic, Gemini, xAI, compatible URLs | The lecturer or student brings any key; no vendor lock-in. |
+| Homework comparison | Embeddings, LLM-only, token similarity | Jaccard similarity as a tool + LLM review | Deterministic, free, explainable; the LLM explains the numbers. |
+| Tests | pytest, Playwright | pytest (67 tests) + a Playwright browser run | API and logic in the suite; the real pages in Chrome. |
+| Diagrams | PlantUML, drawing tool | PlantUML sources + SVG exports | Text diffs in git. |
 
-## What was run
+## 3. Vibe-coded vs. composed
 
-- `pytest` from `demo-web/`: see [conclusions](11-conclusions.md) for the count.
-- A headless Chrome run against a local server: lecturer sign-in and greeting, open lesson, roster import, live barcode drawn, a student page signing its own requests, live codes accepted → area → "ברוך הבא", a frozen code rejected (`qr_static`), remote join, poll/note/question/homework/summary, and the full duplicate-name path (re-pick popup → e-mail code in demo mode → lecturer reject). The camera was replaced by feeding the page the codes that were really on the lecturer screen.
+The assignment prefers composing existing code over writing everything. The split:
 
-## What was not run
+| Part | How | Notes |
+| --- | --- | --- |
+| Web framework, server, ASGI | **Composed** — FastAPI, Uvicorn, Starlette | |
+| QR decoding on the phone | **Composed** — jsQR (bundled `jsqr.js`, ~10k lines) | Largest single piece of code in the repo. |
+| Crypto primitives, Excel writer, HTTP client | **Composed** — `cryptography`, `openpyxl`, `httpx` | |
+| LLM vendors | **Composed** — their public REST APIs | Wrapped by our own Adapter (`providers.py`). |
+| Domain logic: check-in states, duplicate names, barcode signing and liveness, client-IP rules, agent loop and tools | **Vibe-coded** — written with an AI coding agent (Cursor Agent, 3–8 Nov; later commits 11–15 Nov), reviewed and tested by me | This is the design-specific part; nothing ready-made does it. |
+| QR drawing (`qr.js`) and the shimmer border | **Vibe-coded** | Small; a library would add a CDN dependency. |
+| Documents and diagrams | Written by me with AI help | Design came first (diagrams and test strategy were the first commits). |
 
-- A real phone camera pointed at a projector.
-- A phone on the university Wi-Fi reaching Render (to confirm the public IP range that Render sees).
-- Real SMTP delivery.
-- A live LLM call.
+## 4. What was run
 
-## Classroom results (owner)
+- `python -m pytest -q` from `demo-web/`: **67 passed**, 84% line coverage (15 Nov 2026).
+- Headless Chrome (Playwright) against a local server: lecturer sign-in and greeting, open lesson, roster import, live barcode drawn and recorded (the README GIF), two students join remotely, both submit homework, the lecturer sees the submissions, a student review without a key shows "חסר מפתח API". Script: [`demo-web/tests/manual/browser_run.py`](../demo-web/tests/manual/browser_run.py).
+- Earlier headless run: in-class scan with the codes really shown on the lecturer screen → area → "ברוך הבא"; a frozen code rejected (`qr_static`); the duplicate-name popup.
+
+## 5. Real-life checks
+
+The assignment asks to test every tool in real life. To be filled in class before the demo:
 
 | Check | Device | Result | Notes |
 | --- | --- | --- | --- |
 | Join QR opens the HTTPS student page | iPhone / Android | | |
-| On campus Wi-Fi: in-class allowed; on cellular: refused | | | |
+| Campus Wi-Fi: in class allowed; cellular: refused | | | |
 | 2 s live scan → area → ✓ ברוך הבא | | | |
 | Screenshot of the barcode rejected | | | |
-| Duplicate name → popup → e-mail code | | | |
-| Poll, note, question, homework, summary | | | |
+| Duplicate name → popup → lecturer decides | | | |
+| Poll, note, question from the phone | | | |
+| Lesson summary from a real Zoom transcript (live model) | | | Compare with Zoom's own summary |
+| Homework review on the course's example repos (live model) | | | |

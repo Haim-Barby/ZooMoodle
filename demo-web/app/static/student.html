@@ -41,11 +41,6 @@
   <section id="step-wait" class="card" hidden>
     <h2 id="wait-title">בבדיקה</h2>
     <p id="wait-text" class="note"></p>
-    <div id="code-box" hidden>
-      <label for="code">קוד בן 6 ספרות מהמייל</label>
-      <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
-      <button id="code-send" type="button" style="margin-top:.5rem">אשר</button>
-    </div>
   </section>
 
   <section id="lesson" hidden>
@@ -71,6 +66,24 @@
     <div class="card">
       <h2>שיעורי בית</h2>
       <ul id="homework" class="plain"><li class="note">אין עדיין.</li></ul>
+    </div>
+    <div class="card">
+      <h2>הגשת שיעורי בית לביקורת AI</h2>
+      <p class="note">הדבק את התשובה או בחר קובץ טקסט/קוד. הגשה חדשה מחליפה את הקודמת. ההשוואה לעבודות אחרות אנונימית, וזו ביקורת ולא ציון.</p>
+      <textarea id="sub-text" placeholder="התשובה שלך"></textarea>
+      <input id="sub-file" type="file" accept=".txt,.md,.py,.js,.java,.c,.cpp,.ipynb,text/*" style="margin-top:.4rem">
+      <button id="sub-send" type="button" style="margin-top:.4rem">הגש</button>
+      <p id="sub-state" class="note" role="status"></p>
+      <details>
+        <summary>קבל ביקורת AI על ההגשה שלך (מפתח API משלך, לא נשמר)</summary>
+        <div class="row" style="margin-top:.4rem">
+          <select id="rv-provider" style="flex:1"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option><option value="xai">xAI</option></select>
+          <input id="rv-model" placeholder="מודל" style="flex:1">
+        </div>
+        <input id="rv-key" type="password" autocomplete="off" placeholder="מפתח API – לא נשמר" style="margin-top:.4rem">
+        <button id="sub-review" type="button" style="margin-top:.4rem">בקש ביקורת</button>
+      </details>
+      <pre id="sub-review-out" class="summary" hidden></pre>
     </div>
     <div class="card">
       <h2>סיכום השיעור</h2>

@@ -52,7 +52,7 @@
         <p><a id="join-link" href="#" target="_blank" rel="noopener"></a></p>
         <label for="roster-file">רשימת הכיתה (CSV: שם פרטי, שם משפחה, דוא״ל)</label>
         <input id="roster-file" type="file" accept=".csv,text/csv">
-        <p id="roster-state" class="note">המיילים נשמרים בשרת בלבד ולא מוצגים לאף אחד.</p>
+        <p id="roster-state" class="note">המיילים נשמרים רק כתקציר מוצפן (HMAC) ולא מוצגים לאף אחד.</p>
       </div>
       <div class="card">
         <h2>2. ברקוד חי – נוכחות בכיתה</h2>
@@ -117,6 +117,15 @@
         <button id="hw-upload" type="button" style="margin-top:.5rem">העלה קובץ</button>
         <ul id="homework" class="plain"></ul>
       </div>
+      <div class="card">
+        <h2>הגשות וביקורת AI</h2>
+        <p class="note">הסטודנטים מגישים מהטלפון. "ביקורת AI" משתמשת בספק, במודל ובמפתח שבכרטיס הסיכום, ומשווה אנונימית לשאר ההגשות. ביקורת ולא ציון.</p>
+        <ul id="submissions" class="plain"><li class="note">אין הגשות עדיין.</li></ul>
+        <pre id="review-out" class="summary" hidden></pre>
+      </div>
+    </div>
+
+    <div class="grid">
       <div class="card">
         <h2>סיכום שיעור (רשות)</h2>
         <label for="transcript">תמלול השיעור המוקלט (לא חובה)</label>

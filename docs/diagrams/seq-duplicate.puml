@@ -1,0 +1,37 @@
+@startuml seq-duplicate
+title Duplicate name – two phones in class claim "Dana Levi"
+
+actor "Phone A" as A
+actor "Phone B" as B
+participant "HTTP API" as API
+participant CheckinBook as CB
+actor Lecturer
+
+A -> API : join + live scan as "Dana"
+API -> CB : submit_barcode(A)
+CB --> API : A needs_area -> present
+B -> API : join + live scan as "Dana"
+API -> CB : submit_barcode(B)
+CB -> CB : _resolve("Dana"): 2 verified in class
+CB --> API : A, B -> repick
+API --> A : popup "choose your real name"
+API --> B : popup "choose your real name"
+alt B picks another free name
+  B -> API : repick("Yossi")
+  API -> CB : repick(B, Yossi)
+  CB --> API : B present (Yossi)
+  A -> API : repick("Dana")
+  CB --> API : A present (Dana)
+else both pick "Dana" again
+  B -> API : repick("Dana")
+  API -> CB : repick(B, Dana)
+  CB -> CB : already re-picked -> stage 3
+  CB --> API : A, B -> lecturer_decision
+  API --> Lecturer : dashboard: conflict "Dana" (A, B)
+  Lecturer -> Lecturer : asks in class
+  Lecturer -> API : decide(A, accept)
+  API -> CB : decide
+  CB --> API : A present, B rejected
+  API --> B : "not approved"
+end
+@enduml

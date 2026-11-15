@@ -1,0 +1,44 @@
+@startuml usecases
+title ZooMoodle – use cases
+left to right direction
+skinparam packageStyle rectangle
+
+actor Lecturer
+actor Student
+actor "LLM provider" as LLM
+
+rectangle "ZooMoodle" {
+  usecase "UC-1 Sign in with key" as UC1
+  usecase "UC-2 Open lesson,\nimport roster,\nproject join QR + live barcode" as UC2
+  usecase "UC-3 Join remotely" as UC3
+  usecase "UC-4 Check in from class\n(campus Wi-Fi + live barcode)" as UC4
+  usecase "UC-5 Resolve duplicate name" as UC5
+  usecase "UC-6 Decide a conflict" as UC6
+  usecase "UC-7 Poll" as UC7
+  usecase "UC-8 Notes and questions" as UC8
+  usecase "UC-9 Homework files" as UC9
+  usecase "UC-10 Lesson summary" as UC10
+  usecase "UC-11 Export attendance sheet" as UC11
+  usecase "UC-12 Submit homework\nand get an AI review" as UC12
+}
+
+Lecturer --> UC1
+Lecturer --> UC2
+Lecturer --> UC6
+Lecturer --> UC7
+Lecturer --> UC9
+Lecturer --> UC10
+Lecturer --> UC11
+Lecturer --> UC12
+Student --> UC3
+Student --> UC4
+Student --> UC7
+Student --> UC8
+Student --> UC9
+Student --> UC10
+Student --> UC12
+UC4 <.. UC5 : <<extend>>
+UC5 ..> UC6 : <<include>>\n(stage 3)
+UC10 --> LLM
+UC12 --> LLM
+@enduml

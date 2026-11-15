@@ -45,6 +45,17 @@ class Question:
 
 
 @dataclass
+class Submission:
+    """One student's homework answer, kept as text for the LLM review."""
+
+    id: str
+    student_id: str
+    filename: str
+    text: str = field(repr=False)
+    at: float = 0.0
+
+
+@dataclass
 class HomeworkFile:
     id: str
     title: str

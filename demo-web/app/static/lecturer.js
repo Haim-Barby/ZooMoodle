@@ -118,6 +118,7 @@ async function refreshDashboard() {
     ${p.open ? `<button class="ghost" data-close-poll="${esc(p.id)}" type="button">סגור סקר</button>` : '<span class="tag">סגור</span>'}</div>`).join("");
   document.querySelectorAll("[data-close-poll]").forEach((b) => b.addEventListener("click", () => api(`/api/rooms/${state.roomId}/polls/${b.dataset.closePoll}/close`, { method: "POST" }).then(refreshDashboard)));
   $("#homework").innerHTML = d.homework.map((h) => `<li>${esc(h.title)} <span class="note">${esc(h.filename)} · ${Math.ceil(h.size / 1024)}KB</span></li>`).join("");
+  refreshSubmissions().catch(() => {});
   if (d.summary && !$("#summary-state").dataset.shown) { $("#summary-state").textContent = "סיכום מפורסם לסטודנטים."; }
 }
 
@@ -125,11 +126,7 @@ function renderConflicts(list) {
   const box = $("#conflicts");
   if (!list.length) { box.textContent = "אין כרגע."; return; }
   box.innerHTML = list.map((c) => {
-    const email = c.email || null;
-    const emailHtml = !email ? "" : email.demo_code
-      ? `<p class="warn">${esc(email.demo_label)}: <span class="demo-code">${esc(email.demo_code)}</span> (פג בעוד ${email.expires_in} שנ׳)</p>`
-      : email.open ? `<p class="note">נשלח קוד למייל הרשום של השם (פג בעוד ${email.expires_in} שנ׳).</p>` : "";
-    return `<div class="card"><b>${esc(c.name)}</b>${emailHtml}<ul class="plain">${c.claims.map((k) => `<li>
+    return `<div class="card"><b>${esc(c.name)}</b><ul class="plain">${c.claims.map((k) => `<li>
       ${k.mode === "in_class" ? "בכיתה" : "מרחוק"} · ${esc(k.state_text)} ${k.zone ? "· " + esc(ZONE_HE[k.zone]) : ""}
       <button data-decide="${esc(k.claim_id)}" data-action="accept" type="button">זה הוא</button>
       <button class="bad" data-decide="${esc(k.claim_id)}" data-action="reject" type="button">דחה</button></li>`).join("")}</ul></div>`;
@@ -169,6 +166,22 @@ $("#hw-upload").addEventListener("click", async () => {
   const form = new FormData(); form.append("file", file); form.append("title", $("#hw-title").value);
   await api("/api/rooms/" + state.roomId + "/homework", { method: "POST", body: form });
   $("#hw-file").value = ""; $("#hw-title").value = ""; refreshDashboard();
+});
+
+/* ----- homework submissions + AI review (feature 5) ----- */
+async function refreshSubmissions() {
+  const list = (await api("/api/rooms/" + state.roomId + "/submissions")).submissions || [];
+  const html = list.map((s) => `<li>${esc(s.name)} <span class="note">${esc(s.filename)} · ${s.characters} תווים</span>
+    <button class="ghost" data-review="${esc(s.id)}" type="button" ${list.length < 2 ? "disabled title=\"צריך לפחות שתי הגשות\"" : ""}>ביקורת AI</button></li>`).join("") || '<li class="note">אין הגשות עדיין.</li>';
+  if ($("#submissions").innerHTML !== html) $("#submissions").innerHTML = html;
+}
+$("#submissions").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-review]"); if (!b) return;
+  const key = $("#llm-key"); const out = $("#review-out"); out.hidden = false; out.textContent = "בודק את העבודה…";
+  try {
+    const r = await api(`/api/rooms/${state.roomId}/submissions/${b.dataset.review}/review`, { method: "POST", body: JSON.stringify({ provider: $("#llm-provider").value, model: $("#llm-model").value, api_key: key.value }) });
+    out.textContent = r.text;
+  } catch (err) { out.textContent = err.message; }
 });
 
 $("#summary-generate").addEventListener("click", async () => {

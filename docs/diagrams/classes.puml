@@ -8,7 +8,6 @@ class Settings {
   lecturer_key
   campus_ranges
   trusted_proxies
-  smtp_*, demo_email_override
   greeting()
 }
 class LecturerAuth {
@@ -22,6 +21,7 @@ class Store {
   add_poll() / answer_poll()
   add_comment() / add_question()
   add_homework()
+  submit_homework()
   snapshot(room)
 }
 class Room {
@@ -32,30 +32,23 @@ class RoomRoster {
   entries
   replace_from_csv(csv)
   public_names()
-  email_for(entry_id)
 }
 class RosterEntry {
   id, given, family
   salt, verifier(HMAC email)
-  -email (memory only)
 }
 class CheckinBook {
-  claims, challenges
+  claims
   join(entry, mode, on_campus)
   submit_barcode(claim, codes, on_campus)
   choose_area(claim, zone)
   repick(claim, entry)
-  submit_code(claim, code)
   decide(claim_id, action)
 }
 class Claim {
   id, entry_id, mode
   state, zone
   verified, repicked, owner
-}
-class EmailChallenge {
-  entry_id, code_mac, salt
-  expires_at, attempts, used
 }
 class ScreenQrService {
   issue(room_key, room_id)
@@ -66,9 +59,6 @@ class SessionBook {
   issue(claim_id)
   verify(signature, nonce, time)
 }
-class Mailer {
-  send_code(email, name, code)
-}
 class "net" as Net <<module>> {
   client_ip(headers, peer, trusted)
   subnet_status(ip, ranges)
@@ -77,6 +67,26 @@ class Poll
 class Comment
 class Question
 class HomeworkFile
+class Submission {
+  id, student_id
+  filename, text
+}
+class HomeworkReviewService {
+  review(snapshot, submission_id, audience)
+}
+class ToolRegistry <<read-only tools>> {
+  get_poll_results()
+  get_transcript_segment()
+  list_comments()
+  get_homework() / compare_submissions()
+  produce_report()
+}
+abstract class BaseProvider <<Adapter>> {
+  {abstract} complete(messages, tools)
+}
+class OpenAICompatibleProvider
+class AnthropicProvider
+class GeminiProvider
 class SummaryService {
   summarize(snapshot)
 }
@@ -95,16 +105,21 @@ Room *-- "*" Poll
 Room *-- "*" Comment
 Room *-- "*" Question
 Room *-- "*" HomeworkFile
+Room *-- "*" Submission
 RoomRoster *-- "*" RosterEntry
 CheckinBook *-- "*" Claim
-CheckinBook *-- "*" EmailChallenge
 CheckinBook --> ScreenQrService
 CheckinBook --> RoomRoster
-CheckinBook --> Mailer
 Claim ..> RosterEntry : entry_id
-Store --> Mailer
 SummaryService --> LessonAgent
+HomeworkReviewService --> LessonAgent
 LessonAgent --> LLMClient
+LessonAgent --> ToolRegistry
+LLMClient --> BaseProvider
+BaseProvider <|-- OpenAICompatibleProvider
+BaseProvider <|-- AnthropicProvider
+BaseProvider <|-- GeminiProvider
+HomeworkReviewService ..> Store : snapshot
 SummaryService ..> Store : snapshot
 ExportService ..> Claim
 LecturerAuth ..> Settings

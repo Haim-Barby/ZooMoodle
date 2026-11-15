@@ -1,9 +1,8 @@
 """Room roster import.
 
 The national id column is ignored and not stored. Each email is kept as a
-salted HMAC under the server master secret. The plain address is held only
-in server memory, on a field that is excluded from repr, so the duplicate-name
-step can send a one-time code to it. No API response or export contains it.
+salted HMAC under the server master secret; the plain address is not kept.
+No API response or export contains an e-mail.
 """
 
 from __future__ import annotations
@@ -88,7 +87,6 @@ class RosterEntry:
     group: str
     salt: bytes
     verifier: bytes
-    email: str = field(default="", repr=False, compare=False)
 
     @property
     def display(self) -> str:
@@ -180,7 +178,6 @@ class RoomRoster:
                 group=row["group"],
                 salt=salt,
                 verifier=verifier,
-                email=row["email"],
             )
         self.entries = sealed
         self.selected_group = None
@@ -222,11 +219,6 @@ class RoomRoster:
         if entry is None or not self._selected(entry):
             return None
         return entry
-
-    def email_for(self, entry_id: str) -> str:
-        """Server-side only: the address the one-time code goes to."""
-        entry = self.entries.get(entry_id or "")
-        return entry.email if entry else ""
 
     def email_matches(self, entry_id: str, email: str) -> bool:
         entry = self.entries.get(entry_id or "")

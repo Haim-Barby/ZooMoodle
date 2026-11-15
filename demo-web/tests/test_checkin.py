@@ -1,3 +1,4 @@
+from app.domain import SEAT_ZONES
 from tests.conftest import (
     CAMPUS_IP,
     HOME_IP,
@@ -154,3 +155,20 @@ def test_no_id_or_email_is_asked_at_entry():
     names = client.get(f"/api/rooms/{room_id}/roster/names").json()["names"]
     assert {n["display"] for n in names} == {"דנה לוי", "יוסי כהן", "עמית שמש"}
     assert set(names[0]) == {"id", "display"}
+
+
+def test_a_class_of_150_checks_in_quickly():
+    """NFR-P1: a full lecture hall (150 students) checks in; the dashboard stays fast."""
+    import time
+
+    roster = "שם פרטי,שם משפחה,דוא״ל\n" + "".join(f"סטודנט,מספר{i},s{i}@example.test\n" for i in range(150))
+    app, client = make_client()
+    room_id, headers = open_room(client, roster)
+    started = time.perf_counter()
+    for i in range(150):
+        check_in_class(app, client, room_id, f"סטודנט מספר{i}", zone=SEAT_ZONES[i % 9])
+    assert time.perf_counter() - started < 15
+    started = time.perf_counter()
+    dash = client.get(f"/api/rooms/{room_id}/dashboard", headers=headers).json()
+    assert time.perf_counter() - started < 0.5
+    assert dash["counts"]["in_class"] == 150 and sum(dash["zones"].values()) == 150

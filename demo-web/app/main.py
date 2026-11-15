@@ -16,16 +16,14 @@ from app.checkin import ACTIVE_STATES, CONFLICT_STATES, PRESENT, REJECTED, REMOT
 from app.config import Settings
 from app.export_svc import ExportService
 from app.lecturer_auth import LecturerAuth, LecturerAuthError
-from app.llm.agent import AgentError, SummaryService
+from app.llm.agent import AgentError, HomeworkReviewService, SummaryService
 from app.llm.providers import KEY_OPTIONAL, KNOWN_PROVIDERS, LLMClient, LLMConfig, ProviderFailure, build_provider
-from app.mailer import Mailer
 from app.net import client_ip, forwarded_debug, subnet_status
 from app.roster import RosterError
 from app.session_keys import SessionError, canonical_message
 from app.store import Store, StoreError
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-DIAGRAM_DIR = Path(__file__).resolve().parents[2] / "docs" / "diagrams"
 EXPORTS = ExportService()
 STATE_TEXT = {
     "remote": "מחובר מרחוק",
@@ -34,18 +32,17 @@ STATE_TEXT = {
     "present": "נוכח בכיתה",
     "flagged_remote": "בבדיקה: השם נבחר גם במקום אחר",
     "repick": "צריך לבחור שוב את השם",
-    "email_code": "ממתין לקוד מהמייל",
     "lecturer_decision": "המרצה יחליט",
     "rejected": "נדחה",
 }
 
 
-def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     _announce(settings)
     app = FastAPI(title="ZooMoodle")
     app.state.settings = settings
-    app.state.store = Store(settings, mailer)
+    app.state.store = Store(settings)
     app.state.auth = LecturerAuth(settings.master_secret, settings.lecturer_key)
     app.state.http_transport = None
     app.state.provider_factory = None
@@ -215,7 +212,6 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
     @app.get("/api/rooms/{room_id}/me")
     async def me(room_id: str, request: Request):
         room = room_of(room_id)
-        room.checkin.expire()
         claim = claim_for(room, _require_session(request, room, await request.body(), write=False))
         return _me(room, claim)
 
@@ -253,23 +249,11 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
             raise StoreError(exc.reason, exc.status) from exc
         return _me(room, claim)
 
-    @app.post("/api/rooms/{room_id}/email-code")
-    async def email_code(room_id: str, request: Request):
-        raw = await request.body()
-        room = open_room(room_id)
-        claim = claim_for(room, _require_session(request, room, raw, write=True))
-        try:
-            room.checkin.submit_code(claim, str(_body_dict(raw).get("code") or ""))
-        except CheckinError as exc:
-            raise StoreError(exc.reason, exc.status) from exc
-        return _me(room, claim)
-
     # ----- lecturer dashboard ---------------------------------------------------
     @app.get("/api/rooms/{room_id}/dashboard")
     def dashboard(room_id: str, request: Request):
         lecturer(request)
         room = room_of(room_id)
-        room.checkin.expire()
         return {
             **_room_link(request, room),
             "greeting": settings.greeting,
@@ -289,7 +273,6 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
             "homework": [_homework_dict(h) for h in room.homework],
             "summary": room.summary,
             "summary_source": room.summary_source,
-            "email_mode": "smtp" if app.state.store.mailer.configured else "demo",
         }
 
     @app.post("/api/rooms/{room_id}/conflicts/decide")
@@ -432,6 +415,76 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
             },
         )
 
+    # ----- homework submissions + LLM review (feature 5) ----------------------
+    @app.post("/api/rooms/{room_id}/submissions")
+    async def submit_homework(room_id: str, request: Request):
+        raw = await request.body()
+        room = room_of(room_id)
+        claim = active_claim(request, room, raw, write=True)
+        body = _body_dict(raw)
+        item = app.state.store.submit_homework(room, claim.id, str(body.get("text") or ""), str(body.get("filename") or ""))
+        return _submission_dict(room, item)
+
+    @app.get("/api/rooms/{room_id}/submissions")
+    async def list_submissions(room_id: str, request: Request):
+        room = room_of(room_id)
+        if is_lecturer(request):
+            return {"submissions": [_submission_dict(room, s) for s in room.submissions]}
+        claim = _viewer(request, room, await request.body())
+        return {"submissions": [_submission_dict(room, s) for s in room.submissions if s.student_id == claim.id]}
+
+    @app.post("/api/rooms/{room_id}/submissions/{submission_id}/review")
+    async def review_submission(room_id: str, submission_id: str, request: Request):
+        raw = await request.body()
+        room = room_of(room_id)
+        item = app.state.store.submission(room, submission_id)
+        by_lecturer = is_lecturer(request)
+        if not by_lecturer:
+            claim = _viewer(request, room, raw)
+            if item.student_id != claim.id:
+                raise StoreError("not_your_submission", 403)
+        if len(room.submissions) < 2:
+            raise StoreError("need_two_submissions_to_compare", 409)
+        snapshot, names, ids = app.state.store.snapshot(room)
+        audience = "lecturer" if by_lecturer else "student"
+
+        def run(provider):
+            service = HomeworkReviewService(lambda: LLMClient(provider), settings.agent_max_steps)
+            return service.review(snapshot, item.id, audience, names, ids)["report"]
+
+        report = _run_llm(raw, run)
+        return {"submission_id": item.id, "audience": audience, "text": _review_text(report), "report": report}
+
+    def _run_llm(raw: bytes, run):
+        """Build a provider from the request, run once, drop the API key."""
+        body = _body_dict(raw)
+        api_key = str(body.get("api_key") or "").strip()
+        config = LLMConfig(
+            provider=str(body.get("provider") or "openai").strip().lower(),
+            model=str(body.get("model") or "").strip(),
+            base_url=str(body.get("base_url") or "").strip(),
+            api_key=api_key,
+            timeout_seconds=settings.llm_timeout_seconds,
+        )
+        del body
+        if config.provider not in KNOWN_PROVIDERS:
+            raise StoreError("unknown_provider", 400)
+        if not config.model:
+            raise StoreError("missing_model", 400)
+        if config.provider not in KEY_OPTIONAL and not api_key:
+            raise StoreError("missing_key", 400)
+        provider = (app.state.provider_factory or (lambda c: build_provider(c, app.state.http_transport)))(config)
+        try:
+            return run(provider)
+        except (AgentError, ProviderFailure) as exc:
+            message = str(getattr(exc, "message", "") or "model_failed")
+            if api_key:
+                message = message.replace(api_key, "[redacted]")
+            raise StoreError(message, 502) from None
+        finally:
+            config.api_key = ""
+            del provider, config, api_key
+
     # ----- lesson summary -----------------------------------------------------------
     @app.post("/api/rooms/{room_id}/transcript")
     async def upload_transcript(room_id: str, request: Request):
@@ -464,54 +517,24 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
         by_lecturer = is_lecturer(request)
         if not by_lecturer:
             _viewer(request, room, raw)
-        body = _body_dict(raw)
-        api_key = str(body.get("api_key") or "").strip()
-        config = LLMConfig(
-            provider=str(body.get("provider") or "openai").strip().lower(),
-            model=str(body.get("model") or "").strip(),
-            base_url=str(body.get("base_url") or "").strip(),
-            api_key=api_key,
-            timeout_seconds=settings.llm_timeout_seconds,
-        )
-        del body, raw
-        if config.provider not in KNOWN_PROVIDERS:
-            raise StoreError("unknown_provider", 400)
-        if not config.model:
-            raise StoreError("missing_model", 400)
-        if config.provider not in KEY_OPTIONAL and not api_key:
-            raise StoreError("missing_key", 400)
         snapshot, names, ids = app.state.store.snapshot(room)
-        provider = (app.state.provider_factory or (lambda c: build_provider(c, app.state.http_transport)))(config)
-        service = SummaryService(lambda: LLMClient(provider), settings.agent_max_steps)
-        try:
-            report = service.summarize(snapshot, names, ids)["report"]
-        except (AgentError, ProviderFailure) as exc:
-            message = str(getattr(exc, "message", "") or "model_failed")
-            if api_key:
-                message = message.replace(api_key, "[redacted]")
-            raise StoreError(message, 502) from None
-        finally:
-            config.api_key = ""
-            del provider, config, api_key
+
+        def run(provider):
+            service = SummaryService(lambda: LLMClient(provider), settings.agent_max_steps)
+            return service.summarize(snapshot, names, ids)["report"]
+
+        report = _run_llm(raw, run)
         text = _summary_text(report)
         if by_lecturer:
             room.summary, room.summary_source = text, "model"
         return {"text": text, "published": by_lecturer}
 
     # ----- misc ---------------------------------------------------------------------
-    @app.get("/api/diagrams")
-    def diagrams():
-        if not DIAGRAM_DIR.is_dir():
-            return {"diagrams": []}
-        return {"diagrams": [{"file": p.name, "src": f"/diagrams/{p.name}"} for p in sorted(DIAGRAM_DIR.glob("*.svg"))]}
-
     @app.exception_handler(StoreError)
     async def store_error(_request: Request, exc: StoreError):
         return JSONResponse(status_code=exc.status, content={"error": exc.reason})
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    if DIAGRAM_DIR.is_dir():
-        app.mount("/diagrams", StaticFiles(directory=DIAGRAM_DIR), name="diagrams")
     return app
 
 
@@ -525,8 +548,6 @@ def _announce(settings: Settings) -> None:
         print(f"{verb} lecturer key file: {settings.lecturer_key_file} (the key itself is not printed)", flush=True)
     if settings.ephemeral_master_secret:
         print("ZOOMODLE_MASTER_SECRET is unset; rooms will not survive a restart.", flush=True)
-    if not settings.smtp_configured:
-        print("SMTP is not configured: duplicate-name codes are shown on the lecturer dashboard (demo mode).", flush=True)
 
 
 def _profile(settings: Settings) -> dict:
@@ -584,9 +605,6 @@ def _me(room, claim) -> dict:
     }
     if claim.state in (PRESENT, REMOTE):
         view["welcome"] = f"ברוך הבא {display}"
-    if claim.state == "email_code":
-        challenge = room.checkin.challenge_view(claim.entry_id)
-        view["email_sent"] = bool(challenge and challenge["sent"])
     return view
 
 
@@ -631,7 +649,6 @@ def _conflicts(room) -> list[dict]:
                     }
                     for c in claims
                 ],
-                "email": room.checkin.challenge_view(entry_id),
             }
         )
     return out
@@ -664,6 +681,38 @@ def _poll_dict(poll, lecturer: bool, student_id: str = "") -> dict:
 
 def _homework_dict(item) -> dict:
     return {"id": item.id, "title": item.title, "filename": item.filename, "size": len(item.data), "at": item.at}
+
+
+def _submission_dict(room, item) -> dict:
+    return {
+        "id": item.id,
+        "name": _name_of(room, item.student_id),
+        "filename": item.filename,
+        "characters": len(item.text),
+        "at": item.at,
+    }
+
+
+def _review_text(report: dict) -> str:
+    """Render a homework_review report as plain Hebrew-headed text."""
+    lines: list[str] = []
+    for title, key in (("חוזקות", "strengths"), ("נקודות לשיפור", "issues"), ("השוואה (אנונימית) לעבודות אחרות", "comparison")):
+        items = report.get(key) or []
+        if isinstance(items, (str, dict)):
+            items = [items]
+        items = [i for i in items if i]
+        if not items:
+            continue
+        if lines:
+            lines.append("")
+        lines.append(title)
+        for item in items:
+            if isinstance(item, dict):
+                item = item.get("text") or item.get("finding") or item.get("title") or json.dumps(item, ensure_ascii=False)
+            lines.append(f"• {item}")
+    lines.append("")
+    lines.append("זו ביקורת ולא ציון.")
+    return "\n".join(lines)
 
 
 def _summary_text(report: dict) -> str:

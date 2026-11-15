@@ -27,7 +27,8 @@ def redact(text: str, names: list[str], student_ids: list[str]) -> str:
 
 
 def _word_set(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+    # \w is Unicode-aware, so Hebrew words count too (not only a-z / 0-9).
+    return set(re.findall(r"\w+", (text or "").lower()))
 
 
 def jaccard(left: str, right: str) -> float:

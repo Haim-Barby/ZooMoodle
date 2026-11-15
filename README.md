@@ -1,42 +1,57 @@
 # ZooMoodle
 
-A one-lesson teaching tool: the lecturer opens a lesson room, students join from their phones, and the lecturer sees who is in class, who is remote, and what the class thinks — notes, questions, polls, homework and an optional AI summary.
+A KISS teaching tool for one lesson: the lecturer opens a lesson room, students join from their phones, and the lecturer gets a trustworthy attendance sheet plus live feedback — notes, questions, polls, an AI lesson summary and an AI homework review.
 
-Individual project, Introduction to Software Engineering (OOP/OOD), Exercise 2. Deadline: 25 November 2026. Course used for the demo: **מערכות נוירונים, week 4, lecturer טום יניב**.
+Individual project, Introduction to Software Engineering (OOP/OOD), Exercise 2 — *Vibe Coding & Deep Designing*. Deadline: 25 November 2026. Demo course: **מערכות נוירונים, week 4, lecturer טום יניב**.
 
-## The flow
+## 1. The problem
 
-**Lecturer**
+The online tools used in class today "are not doing it":
 
-1. Signs in with the lecturer key (a 256-bit random key). The page greets: *"שלום טום יניב, השבוע שבוע 4 בקורס מערכות נוירונים"*.
-2. Opens a new lesson and imports the class list (CSV: first name, last name, email; an id-number column is ignored and never stored).
-3. Shows two things on the projector: a **join QR** (opens the student site for this room) and the **live flickering barcode**.
-4. Works from the room dashboard: in-class vs remote counts, the attendance list with ✓, a 3×3 class map, duplicate-name decisions, student notes, questions sorted by votes, polls with live results, homework upload, the lesson summary, and CSV/Excel export.
+- **Attendance is easy to fake and slow to check.** A sign-up sheet or a Moodle button can be filled in by a friend, or from home with a photo of the screen. Counting heads by hand wastes lesson time and still gives no sheet.
+- **The lecturer does not know what the class understood** until the exam. Students rarely ask out loud; there is no quick way to run a poll or collect anonymous notes.
+- **Recordings and homework are not used.** The Zoom auto-summary is generic, and nobody has time to give every student personal feedback on homework or to compare submissions.
 
-**Student (phone)**
+**Goal:** a simple, phone-based, LLM-ready web app that works in *this* classroom and can be demoed in 10 minutes.
 
-1. Scans the join QR → picks their name from the list → chooses **בכיתה** or **מרחוק**. No id number and no email at entry.
-2. **Remote:** marked remote at once. No network or barcode check.
-3. **In class:** must pass both checks —
-   - **University network.** The server reads the phone's real public IP and requires it to be inside the university ranges (default `192.114.48.0/21`, `192.114.56.0/23`). Body fields are ignored.
-   - **Live barcode.** The camera is held on the flickering barcode for 2 seconds. A signed QR changes every 250 ms inside a 20 Hz shimmering border; the phone must collect ≥5 distinct codes. A screenshot (`qr_static`), a short capture (`qr_short`), a code older than 6 s by the server clock, a reused code, or a code from another room is rejected.
-4. Picks their area in the classroom (3×3 map) → **✓ ברוך הבא ‹name›**.
-5. From the phone: write a note, ask or up-vote a question, answer a poll, download homework, read the summary (or make a private one with their own API key).
+## 2. Scope — the five requested features
 
-**Duplicate names** are resolved in stages:
+| # | Feature (from the assignment) | Our solution | Where |
+| --- | --- | --- | --- |
+| 1 | **Attendance** (main feature) + online/offline spreadsheet | Student picks a name on the phone. *In class* is verified by two factors: **campus Wi-Fi + live barcode** (see §3). *Remote* is one tap. The lecturer sees a live list (online) and downloads CSV/Excel (offline). | `checkin.py`, `screen_qr.py`, `net.py`, `export_svc.py` |
+| 2 | Student comments and suggestions | Notes and questions from the phone; classmates up-vote questions; the dashboard sorts by votes. | `store.py` |
+| 3 | On-the-spot (KISS) polls | Question + 2–6 answers, optional correct answer, live counts. | `store.py` |
+| 4 | ML summary of the class video | The lecturer uploads the **transcript** Zoom/Meet already export (VTT/TXT); an LLM agent links topics to poll mistakes and student questions and publishes the summary to the class. | `llm/agent.py` |
+| 5 | Deep LLM homework review with comparison to other students | Students submit an answer from the phone; the LLM agent reviews it and compares it **anonymously** with the other submissions (Jaccard similarity tool). Review, not a grade. | `llm/agent.py`, `llm/tools.py` |
+
+Out of scope (assignment guideline 1): Moodle/Zoom integration, university login and personal-data systems, native apps, a database.
+
+## 3. Our attendance solution: two-factor check-in
+
+The assignment suggests a photo + automatic head count. We chose a different way that also tells **who** is in class, not only **how many**: an in-class check-in needs **two independent factors** — something only a person *on campus* has, and something only a person *in the room* can see.
+
+<p align="center"><img src="docs/media/live-barcode.gif" width="320" alt="The live barcode: a QR that changes every 250 ms inside a shimmering border"></p>
+
+| Factor | What the student must have | How it is checked | What it stops |
+| --- | --- | --- | --- |
+| **1. University network** | The phone is on the campus Wi-Fi | The **server** reads the phone's real public IP and requires it to be in the university ranges (`192.114.48.0/21`, `192.114.56.0/23`). Nothing the phone sends can change it. | Checking in from home or over cellular data |
+| **2. Live barcode** (the GIF above) | The phone's camera sees the lecturer's screen *now* | The screen shows a signed QR that **changes every 250 ms** inside a 20 Hz shimmering border. The phone must hold on it for **2 s** and collect **≥5 different codes**, each ≤6 s old, from this room, never used before. | A photo or screenshot sent by a friend (holds one code only), a recording replayed later, a code from another lesson |
+
+Each factor alone is weak: a dorm is on the campus network, and a friend can send a photo. **Together** a student must be on campus *and* see the live screen — in practice, in the room.
+
+**Student flow (one screen per step):** scan the join QR → pick your name → **בכיתה** (both checks, then choose your area in the room) or **מרחוק** (no checks) → *✓ ברוך הבא ‹name›*. No ID number and no e-mail are ever asked.
+
+**Duplicate names** are resolved in three stages:
 
 | Stage | Situation | What happens |
 | --- | --- | --- |
-| 1 | Same name chosen remotely and verified in class | In class wins; the remote entry is flagged for the lecturer. |
-| 2 | Two verified in-class phones with one name | Both get a popup and re-pick their real name. |
-| 3 | Still the same name | A 6-digit one-time code is e-mailed to that name's roster address; whoever types it gets the name (hashed, 5 min, 3 tries per phone, single use). |
-| 4 | Still unresolved | The lecturer decides on the dashboard (and asks in class). |
+| 1 | The same name is used remotely and verified in class | In class wins; the remote entry is flagged for the lecturer. |
+| 2 | Two verified in-class phones choose one name | Both get a popup and re-pick their real name. |
+| 3 | They pick the same name again | The lecturer decides on the dashboard (and asks in class). |
 
-## Privacy and security in one paragraph
+**Privacy.** The roster's ID column is ignored and never stored; e-mails are kept only as salted HMACs and never shown or exported. The lecturer key is never printed or committed, and each phone signs its requests with its own session key. LLM API keys are used for one request and dropped; the model only sees pseudonyms (`P-1a2b3c4d`).
 
-The lecturer key is never committed or printed; the server keeps only an HMAC of it and hands the browser a short-lived session token. Each student phone gets its own session secret and signs every request (HMAC-SHA256, timestamp, nonce). Roster emails are kept as salted HMACs; the plain address lives only in server memory to send the duplicate-name code and never appears in any response, list or export. LLM API keys are used for one request and dropped — never stored, logged or returned.
-
-## Run it
+## 4. Run it
 
 ```bash
 cd demo-web
@@ -46,32 +61,26 @@ cp .env.example .env          # optional settings, never committed
 python -m app.main            # http://127.0.0.1:8000/
 ```
 
-- On first start the lecturer key is created at `~/.zoomoodle/lecturer-key.txt` (mode 600). Only the path is printed. Paste the key on the lecturer page.
-- Phones need **HTTPS** for the camera: `cloudflared tunnel --url http://127.0.0.1:8000`, and open the lecturer page through that URL so the join QR uses it.
-- To try the in-class path at home, add your own address to `ZOOMODLE_CAMPUS_RANGES` in `.env` (for a local browser: `127.0.0.1/32`).
-- Duplicate-name e-mail: set `ZOOMODLE_SMTP_*` in `.env`. `DEMO_EMAIL_OVERRIDE` routes every code to one demo inbox. With no SMTP the code is shown on the lecturer dashboard under **"מצב הדגמה – המייל לא נשלח"**.
-- Tests: `python -m pytest -q` from `demo-web/`.
+- The lecturer key is created at `~/.zoomoodle/lecturer-key.txt` (mode 600) on first start; only the path is printed.
+- Phones need **HTTPS** for the camera: deploy on Render (`demo-web/render.yaml`) or run `cloudflared tunnel --url http://127.0.0.1:8000`, and open the lecturer page through that URL.
+- To try the in-class path at home, add your own address to `ZOOMODLE_CAMPUS_RANGES` in `.env` (local browser: `127.0.0.1/32`).
+- Tests: `python -m pytest -q` from `demo-web/` (67 tests).
+- State is in memory: export the sheet before stopping the server. Proxy/IP details: [components](docs/06-components.md#client-ip-behind-a-proxy).
 
-**Client IP behind a proxy.** Forwarded headers are trusted only from `ZOOMODLE_TRUSTED_PROXIES`. `CF-Connecting-IP` is accepted only from loopback (cloudflared on the same laptop). Otherwise the right-most `X-Forwarded-For` hop that is not a trusted proxy is used — on Render, the hop Render's proxy appended. A browser-supplied left-most hop is ignored. The assumption is that the platform proxy is the only path to the app.
+## 5. Assignment deliverables
 
-**Render.** `demo-web/render.yaml` describes a free web service. Set `ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_KEY` in the Render dashboard (an existing `ZOOMODLE_LECTURER_TOKEN` is accepted as the key). State is in memory: a restart or the free-plan spin-down clears lessons, so export the sheet before you finish.
-
-## Assignment deliverables
-
-| # | Item | File |
+| To-do | Item | File |
 | --- | --- | --- |
 | 1 | Problem and scope | this README |
-| 2 | Tools report | [docs/02-tools-report.md](docs/02-tools-report.md) |
-| 3 | Statement of work | [docs/03-SoW.md](docs/03-SoW.md) |
-| 4 | Requirements and threat model | [docs/04-SRS.md](docs/04-SRS.md) |
-| 5 | Use cases | [docs/05-use-cases.md](docs/05-use-cases.md) |
-| 6 | Components | [docs/06-components.md](docs/06-components.md) |
-| 7 | Class and sequence diagrams | [docs/07-design.md](docs/07-design.md) |
-| 8 | Testing strategy | [docs/08-testing-strategy.md](docs/08-testing-strategy.md) |
-| 9 | Demo app | `demo-web/` |
-| 10 | 10-minute demo script | [docs/10-demo-script.md](docs/10-demo-script.md) |
-| 11 | Conclusions | [docs/11-conclusions.md](docs/11-conclusions.md) |
+| 3 | Tools report (incl. vibe-coded vs. composed) | [docs/02-tools-report.md](docs/02-tools-report.md) |
+| 4 | Statement of work | [docs/03-SoW.md](docs/03-SoW.md) |
+| 5 | SRS and threat model | [docs/04-SRS.md](docs/04-SRS.md) |
+| 6 | Use cases (client stories) | [docs/05-use-cases.md](docs/05-use-cases.md) |
+| 7 | Software components | [docs/06-components.md](docs/06-components.md) |
+| 8 | Class, state and sequence diagrams, OOD | [docs/07-design.md](docs/07-design.md) |
+| 9 | Testing strategy (mapped to classes) | [docs/08-testing-strategy.md](docs/08-testing-strategy.md) |
+| 10 | Demo web app | [`demo-web/`](demo-web/) |
+| 11 | 10-minute demo script | [docs/10-demo-script.md](docs/10-demo-script.md) |
+| 12 | Conclusions | [docs/11-conclusions.md](docs/11-conclusions.md) |
 
-**Not yet verified:** a real phone camera on the projected barcode, the university network as seen from Render, real SMTP delivery, and a live LLM call. The automated suite and a headless-browser run do not replace those checks.
-
-Out of scope: Moodle/Zoom integration, university login, native apps, a database, face recognition.
+**Still to verify in class:** a real phone camera on the projected barcode, the campus Wi-Fi as seen from Render, and a live LLM call. Results go in the [tools report](docs/02-tools-report.md#5-real-life-checks).

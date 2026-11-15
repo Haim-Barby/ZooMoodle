@@ -1,47 +1,79 @@
-# Use cases
+# Use cases (client stories)
 
-Actors: Lecturer, Student, Mail server, LLM provider.
+Actors: **Lecturer**, **Student**, **LLM provider** (external, optional).
+
+![Use cases](diagrams/usecases.svg)
+
+Source: `docs/diagrams/usecases.puml`. Each use case starts with the client story, then the acceptance criteria. The three central ones (UC-2, UC-4, UC-12) also have a full flow.
 
 ## UC-1 Lecturer signs in
-I enter my key and see "שלום טום יניב, השבוע שבוע 4 בקורס מערכות נוירונים".
-**Accept:** wrong key → 401, 10 failures → 429; the key is not echoed; lecturer routes need the session token.
+**Story:** As a lecturer, I want to sign in with one private key, so that only I can open lessons and see the class.
+**Accept:** right key → "שלום טום יניב, השבוע שבוע 4 בקורס מערכות נוירונים"; wrong key → 401, 10 failures in 5 min → 429; the key is never echoed; lecturer routes need the session token. (FR-1)
 
 ## UC-2 Lecturer opens a lesson
-I open a lesson, import the roster, and project the join QR and the live barcode.
-**Accept:** the roster shows names only; the barcode changes every 250 ms and shimmers.
+**Story:** As a lecturer, I want to open a lesson and put a join QR and a live barcode on the projector, so that students can check in without me calling names.
+
+| | |
+| --- | --- |
+| Precondition | Signed in (UC-1); a roster CSV is at hand. |
+| Main flow | 1. Lecturer presses "פתח שיעור חדש". 2. The system creates a room and shows its join QR. 3. Lecturer imports the roster CSV. 4. The system shows "נטענו N שמות", ignoring the ID column. 5. The system shows the live barcode, changing every 250 ms. |
+| Alternatives | 3a. CSV without name or e-mail columns → "roster_headers" error, nothing imported. 3b. The roster has a group column → the list can be limited to one group (`POST /roster/group`; API only in the demo). |
+| Postcondition | Students can open the student page; the dashboard is live. |
+
+**Accept:** the roster shows names only; the barcode changes every 250 ms and shimmers. (FR-2–FR-4)
 
 ## UC-3 Student joins remotely
-I scan the join QR, pick my name, choose מרחוק.
-**Accept:** ✓ remote and "ברוך הבא ‹name›"; no network or barcode needed.
+**Story:** As a student at home, I want to mark myself remote in one tap, so that the lecturer knows I follow the lesson online.
+**Accept:** ✓ remote and "ברוך הבא ‹name›"; no network or barcode needed. (FR-6)
 
 ## UC-4 Student checks in from class
-I pick my name, choose בכיתה, hold my camera on the barcode for 2 s, then pick my area.
-**Accept:** refused off the campus network (`not_on_campus_network`); a screenshot → `qr_static`; too short → `qr_short`; stale, reused or other-room codes refused; a valid scan → area → ✓ and "ברוך הבא ‹name›"; forged forwarding headers do not help.
+**Story:** As a student in class, I want to check in from my phone in a few seconds, so that I am marked present and nobody can mark me from home.
+
+| | |
+| --- | --- |
+| Precondition | The lesson is open (UC-2); the phone is on the campus Wi-Fi. |
+| Main flow | 1. Student scans the join QR. 2. Picks their name. 3. Chooses בכיתה. 4. The server checks the phone's IP is in the campus ranges. 5. Student holds the camera on the live barcode for 2 s. 6. The phone sends the codes it read. 7. The server re-checks the IP and verifies ≥5 fresh, ordered, unused codes of this room. 8. Student picks their area on the 3×3 map. 9. The system shows "✓ ברוך הבא ‹name›" and the dashboard counts them in class. |
+| Alternatives | 4a. Not on the campus network → `not_on_campus_network`; the student may join remotely (UC-3). 7a. A screenshot/photo → `qr_static`. 7b. Too short → `qr_short`. 7c. Stale, reused or other-room codes → refused. 7d. The name is already verified by another phone → UC-5. |
+| Postcondition | The claim is `present` with an area; it appears in the sheet. |
+
+**Accept:** all alternatives above refuse the check-in; forged forwarding headers do not help. (FR-7, FR-8)
 
 ## UC-5 Duplicate name
-Two phones claim one name.
-**Accept:** remote vs verified in class → remote flagged. Two in class → both see a re-pick popup. Same name again → an e-mailed code; the right code takes the name, the other goes to the lecturer. Wrong codes or expiry → the lecturer decides. Without SMTP the code appears only on the dashboard as "מצב הדגמה – המייל לא נשלח".
+**Story:** As a lecturer, I want two phones that claim one name to be sorted out automatically where possible, so that I only step in when I must.
+**Accept:** remote vs. verified in class → remote flagged. Two in class → both see a re-pick popup; one picking another name resolves it. Same name again → the lecturer decides (UC-6). (FR-9)
 
-## UC-6 Lecturer decides
-I see the conflict on the dashboard, ask in class, and press "זה הוא" or "דחה".
-**Accept:** the accepted claim gets the name; other claims for that name are rejected.
+## UC-6 Lecturer decides a conflict
+**Story:** As a lecturer, I want to give a disputed name to the right phone, so that the sheet is correct.
+**Accept:** the conflict appears on the dashboard; "זה הוא" gives the name and rejects the other claims; "דחה" shows "לא אושר" on that phone. (FR-9)
 
 ## UC-7 Poll
-I open a poll; students answer once from the phone.
-**Accept:** the dashboard shows live counts; students see counts after voting or when closed.
+**Story:** As a lecturer, I want to ask a quick question and see the answers live, so that I know whether the class understood.
+**Accept:** the dashboard shows live counts; each student answers once; students see counts after voting or when the poll is closed. (FR-11)
 
 ## UC-8 Notes and questions
-Students send notes and questions and up-vote questions.
-**Accept:** the dashboard shows notes with names and questions sorted by votes; only checked-in students can post.
+**Story:** As a student, I want to send a note or a question during the lesson and up-vote others' questions, so that I am heard without interrupting.
+**Accept:** the dashboard shows notes with names and questions sorted by votes; only checked-in students can post. (FR-12)
 
-## UC-9 Homework
-I upload a file; students download it.
-**Accept:** lecturer-only upload, ≤5 MB; download requires a checked-in session and is served as an attachment.
+## UC-9 Homework files
+**Story:** As a lecturer, I want to hand out a homework file from the dashboard, so that students download it from the same page.
+**Accept:** lecturer-only upload, ≤5 MB; download requires a checked-in session and is served as an attachment. (FR-13)
 
-## UC-10 Lesson summary (optional)
-I upload a transcript and either write a summary or give a provider, model and API key.
-**Accept:** the summary appears to all students of the room; a student may make a private one with their own key; keys are never stored, logged or returned.
+## UC-10 Lesson summary
+**Story:** As a lecturer, I want a summary of the recorded lesson that also uses the polls and questions, so that students get a useful recap and I see what to repeat.
+**Accept:** after uploading the Zoom/Meet transcript, the summary is written by the agent (with a key) or by hand, and appears to all students of the room; a student may make a private one with their own key; keys are never stored, logged or returned. (FR-14)
 
-## UC-11 Export
-I download the attendance sheet.
-**Accept:** CSV/XLSX with name, mode, state, area, time; no email or id.
+## UC-11 Export the attendance sheet
+**Story:** As a lecturer, I want the attendance as a spreadsheet, so that I can keep it offline and upload it where I need.
+**Accept:** CSV/XLSX with name, mode, state, area, time; no e-mail or ID. (FR-10)
+
+## UC-12 Submit homework and get an AI review
+**Story:** As a student, I want feedback on my homework and to know how it compares with the class, so that I can improve before the deadline. As a lecturer, I want a review of any submission, so that I can spot weak or copied work quickly.
+
+| | |
+| --- | --- |
+| Precondition | The student is checked in (UC-3/UC-4); the caller has an LLM key. |
+| Main flow | 1. Student pastes the answer or picks a text/code file and presses הגש. 2. The system stores it (a new one replaces the old). 3. Student (or lecturer) presses "בקש ביקורת" with provider, model and key. 4. The system builds an anonymous snapshot (pseudonyms, names redacted). 5. The agent reads the submission, calls `compare_submissions` on other submissions, and produces strengths, issues and a comparison. 6. The system shows the review, marked "זו ביקורת ולא ציון", and drops the key. |
+| Alternatives | 1a. Empty or >100,000 characters → refused. 3a. A student asks about someone else's submission → 403. 3b. Only one submission in the room → "need_two_submissions_to_compare". 5a. The model fails or never produces a valid report → an error, no invented text. |
+| Postcondition | Nothing is stored except the submission; the review is returned to the caller only. |
+
+**Accept:** as above; the model never sees a real name. (FR-15)

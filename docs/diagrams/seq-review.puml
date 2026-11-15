@@ -1,0 +1,34 @@
+@startuml seq-review
+title Homework review with anonymous comparison (feature 5)
+
+actor Student
+participant "Student page" as UI
+participant "HTTP API" as API
+participant Store
+participant HomeworkReviewService as HR
+participant LessonAgent as AG
+participant ToolRegistry as TR
+participant "LLM provider\n(Adapter)" as LLM
+
+Student -> UI : paste answer / pick file
+UI -> API : signed POST /submissions {text}
+API -> Store : submit_homework (replaces older one)
+Student -> UI : "request review" + provider, model, key
+UI -> API : signed POST /submissions/{id}/review {key}
+API -> API : own submission? >= 2 submissions?
+API -> Store : snapshot(room)
+Store --> API : pseudonyms P-xxxx, names -> [name]
+API -> HR : review(snapshot, id, audience=student)
+HR -> AG : run("homework_review")
+loop until produce_report accepted (max 8 steps)
+  AG -> LLM : complete(messages, tool specs)
+  LLM --> AG : tool call
+  AG -> TR : list_homework_ids / get_homework /\ncompare_submissions (Jaccard, no model)
+  TR --> AG : data (anonymous)
+end
+AG -> TR : produce_report {strengths, issues,\ncomparison, not_a_grade=true}
+TR --> AG : accepted
+AG --> API : report (names scrubbed again)
+API --> UI : text "Strengths / To improve / Comparison"
+note over API : API key used for this request only,\nthen cleared – never stored or logged
+@enduml

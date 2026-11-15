@@ -9,9 +9,11 @@ const ERRORS = {
   qr_sequence: "הסריקה נקטעה. נסה שוב והחזק יציב.",
   qr_mismatch: "זה לא הברקוד של השיעור הזה.",
   qr_replay: "הקודים האלה כבר שימשו. סרוק שוב את המסך.",
-  bad_code: "הקוד שגוי.",
-  code_expired: "הקוד פג. המרצה יחליט.",
-  code_attempts: "יותר מדי ניסיונות. המרצה יחליט.",
+  missing_submission: "אין מה להגיש. הדבק תשובה או בחר קובץ.",
+  submission_too_large: "ההגשה גדולה מדי (עד 100,000 תווים).",
+  need_two_submissions_to_compare: "צריך לפחות עוד הגשה אחת בשיעור כדי להשוות. נסה שוב מאוחר יותר.",
+  missing_key: "חסר מפתח API.",
+  missing_model: "חסר שם מודל.",
   room_closed: "השיעור נסגר.",
   unknown_room: "השיעור לא נמצא. סרוק שוב את קוד ההצטרפות.",
   not_checked_in: "צריך לסיים את הכניסה לשיעור קודם.",
@@ -98,10 +100,8 @@ function render(me) {
   }
   lastShown = me.state;
   stopScan(); step("step-wait");
-  $("#code-box").hidden = me.state !== "email_code";
   const texts = {
     repick: ["שם כפול", "בחר שוב את השם שלך בחלון שנפתח."],
-    email_code: ["אימות במייל", me.email_sent ? "שלחנו קוד בן 6 ספרות למייל הרשום של השם הזה. מי שמקליד אותו מקבל את השם." : "שלחנו קוד בן 6 ספרות לבעל השם. בהדגמה המרצה רואה את הקוד על המסך שלו."],
     flagged_remote: ["בבדיקה", "השם הזה נבחר גם במקום אחר. המרצה יחליט."],
     lecturer_decision: ["המרצה יחליט", "לא הצלחנו להכריע אוטומטית. המרצה יבדוק בכיתה."],
     rejected: ["לא אושר", "המרצה לא אישר את הכניסה עם השם הזה."],
@@ -165,9 +165,6 @@ $("#repick-send").addEventListener("click", async () => {
   const entry = $("#repick-name").value; if (!entry) return;
   try { render(await call(R("/repick"), "POST", { entry_id: entry })); } catch (err) { say(err.code, err.message); }
 });
-$("#code-send").addEventListener("click", async () => {
-  try { render(await call(R("/email-code"), "POST", { code: $("#code").value })); say(""); } catch (err) { say(err.code, err.message); refreshMe(); }
-});
 
 /* ----- lesson ----- */
 async function lessonPart(path, fallback) {
@@ -208,6 +205,30 @@ $("#q-send").addEventListener("click", async () => {
   try { await call(R("/questions"), "POST", { text: $("#q-text").value }); $("#q-text").value = ""; refreshLesson(); }
   catch (err) { $("#lesson-state").textContent = ERRORS[err.code] || err.message; }
 });
+/* ----- homework submission + AI review (feature 5) ----- */
+let mySubmission = "";
+$("#sub-file").addEventListener("change", async () => {
+  const file = $("#sub-file").files[0]; if (file) $("#sub-text").value = await file.text();
+});
+$("#sub-send").addEventListener("click", async () => {
+  const file = $("#sub-file").files[0];
+  try {
+    const r = await call(R("/submissions"), "POST", { text: $("#sub-text").value, filename: file ? file.name : "" });
+    mySubmission = r.id; $("#sub-state").textContent = `הוגש (${r.characters} תווים).`;
+  } catch (err) { $("#sub-state").textContent = ERRORS[err.code] || err.message; }
+});
+$("#sub-review").addEventListener("click", async () => {
+  const key = $("#rv-key"); const out = $("#sub-review-out"); out.hidden = false;
+  try {
+    if (!mySubmission) { const mine = await call(R("/submissions")); mySubmission = ((mine.submissions || [])[0] || {}).id || ""; }
+    if (!mySubmission) { out.textContent = "קודם הגש את העבודה."; return; }
+    out.textContent = "בודק את העבודה…";
+    const r = await call(R(`/submissions/${mySubmission}/review`), "POST", { provider: $("#rv-provider").value, model: $("#rv-model").value, api_key: key.value });
+    out.textContent = r.text;
+  } catch (err) { out.textContent = ERRORS[err.code] || err.message; }
+  finally { key.value = ""; }
+});
+
 $("#my-summary").addEventListener("click", async () => {
   const key = $("#llm-key");
   try {

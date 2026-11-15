@@ -1,0 +1,27 @@
+@startuml state-claim
+title Claim – state machine (one phone's attempt to be one roster name)
+hide empty description
+
+[*] --> remote : join(mode=remote)
+[*] --> pending_barcode : join(mode=in_class)\n[IP in campus ranges]
+[*] --> [*] : join(in_class)\n[off campus] / 403
+
+pending_barcode --> needs_area : submit_barcode\n[IP on campus AND >=5 live codes, 2 s]
+pending_barcode --> pending_barcode : qr_static / qr_short /\nqr_stale / qr_replay
+needs_area --> present : choose_area(zone)
+
+remote --> flagged_remote : same name verified in class\nor picked remotely again
+needs_area --> repick : another verified in-class\nclaim on the same name
+present --> repick : another verified in-class\nclaim on the same name
+repick --> present : repick(other free name)
+repick --> lecturer_decision : repick(same name again)
+
+flagged_remote --> remote : lecturer accept
+flagged_remote --> rejected : lecturer reject
+lecturer_decision --> present : lecturer accept
+lecturer_decision --> rejected : lecturer reject\n(or name given to other)
+
+present : ✓ in class
+remote : ✓ remote
+rejected --> [*]
+@enduml

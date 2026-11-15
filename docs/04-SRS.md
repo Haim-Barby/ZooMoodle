@@ -2,49 +2,73 @@
 
 ## 1. Purpose
 
-Attendance a student cannot fake from home with a photo, and live feedback for the lecturer of one lesson.
+Attendance a student cannot fake from home, with a spreadsheet for the lecturer (feature 1, the main one), and live feedback and LLM help for one lesson (features 2–5).
 
 ## 2. Overview
 
-One FastAPI process serves the lecturer page (`/`) and the student page (`/student`) and keeps everything in memory. Phones use HTTPS. An LLM provider is optional.
+One FastAPI process serves the lecturer page (`/`) and the student page (`/student`) and keeps everything in memory. Phones use HTTPS. An LLM provider is optional and is called only with a key given in the request.
 
-## 3. Functional requirements
+## 3. Glossary
 
-| ID | Requirement |
+| Term | Meaning |
 | --- | --- |
-| FR-1 | The lecturer signs in with the lecturer key. The server compares an HMAC of it in constant time, rate-limits failures (10 per 5 min) and returns a 12-hour session token plus the greeting "שלום טום יניב, השבוע שבוע 4 בקורס מערכות נוירונים". |
-| FR-2 | The lecturer opens a lesson room (default title "מערכות נוירונים – שבוע 4") and gets a student URL shown as a join QR. |
-| FR-3 | The lecturer imports a CSV roster (first/last name or full name, email). The id column is ignored. Emails are stored as salted HMAC; the plain address only in memory for FR-9. |
-| FR-4 | The lecturer screen shows the live barcode: an HMAC-signed, room-bound QR per 250 ms slot and a 20 Hz shimmer border. |
-| FR-5 | A student picks a name from the roster and chooses in class or remote. No id or email is asked. Each join gets its own signed session. |
-| FR-6 | Remote: state `remote` (✓ remote). No network or barcode check. |
-| FR-7 | In class requires (a) the client IP inside `ZOOMODLE_CAMPUS_RANGES`, checked at join and again at scan, and (b) a barcode capture of ≥5 distinct codes spanning ≥2 s, each ≤6 s old by the server clock, in order, not reused for that name, from this room. Then the student picks one of 9 areas and becomes `present` with "ברוך הבא ‹name›". |
-| FR-8 | Client IP: forwarded headers are honoured only from trusted proxies; `CF-Connecting-IP` only from loopback; else the right-most untrusted `X-Forwarded-For` hop; never a body field. |
-| FR-9 | Duplicate names: (1) a verified in-class claim flags remote claims of the same name; (2) two verified in-class claims → both must re-pick; (3) same name again → a 6-digit code to the roster email (or `DEMO_EMAIL_OVERRIDE`), hashed, 5 min, 3 tries per phone / 6 total, single use; the correct code wins and the other goes to the lecturer; (4) expiry or exhausted tries → lecturer. The lecturer can accept or reject any claim. Without SMTP the code is shown only on the dashboard with "מצב הדגמה – המייל לא נשלח". |
-| FR-10 | Dashboard: counts (in class, remote, in progress, conflicts), list with ✓, 3×3 map, conflicts, notes, questions by votes, polls with results, homework, summary. CSV/XLSX export of name, mode, state, area, time. |
-| FR-11 | Polls: 2–6 options, optional correct answer, one answer per student, close poll. Students see counts only after voting or closing. |
-| FR-12 | Students in `present` or `remote` post notes, questions and up-votes, and answer polls. |
-| FR-13 | The lecturer uploads homework files (≤5 MB); checked-in students list and download them (as attachments). |
-| FR-14 | Summary: the lecturer may publish text, or give provider/model/API key to have the agent write it; then all students of the room see it. A student may generate a private summary with their own key. |
+| Room | One lesson: roster, live barcode, check-ins, polls, notes, questions, homework, summary. |
+| Roster | The class list imported from CSV (names; e-mail kept only as a salted HMAC). |
+| Claim | One phone's attempt to be one roster name. Its state drives check-in (see the state diagram in [design](07-design.md)). |
+| Live barcode | A QR code signed with the room key that changes every 250 ms (one *slot*), inside a 20 Hz shimmering border. |
+| Campus ranges | Public IP ranges the university network leaves through (`192.114.48.0/21`, `192.114.56.0/23`). |
+| Two-factor check-in | In class = campus network **and** live barcode. |
+| Pseudonym | `P-xxxxxxxx`, a hash of a claim id; the only identity an LLM sees. |
+| Submission | One student's homework text for the LLM review (feature 5). |
 
-## 4. Non-functional requirements
+## 4. Functional requirements
 
-| Concern | Requirement |
-| --- | --- |
-| Secrets | Lecturer key from env or a mode-600 file, never printed or committed. API keys used per request only, never stored, logged or returned. |
-| Privacy | No id number. No email in any API response, list or export. Agent input uses pseudonyms and redacted names. |
-| Usability | Hebrew RTL pages; phone flow fits one screen per step. |
-| Availability | In memory; restart loses lessons. Model failures return an error, never invented text. |
+Priority: **M** = must (the demo fails without it), **S** = should, **C** = could.
 
-## 5. Threat model
+| ID | Feature | Requirement | Pri |
+| --- | --- | --- | --- |
+| FR-1 | 1 | The lecturer signs in with the lecturer key. The server compares an HMAC of it in constant time, rate-limits failures (10 per 5 min) and returns a 12-hour session token and a greeting built from settings (demo: "שלום טום יניב, השבוע שבוע 4 בקורס מערכות נוירונים"). | M |
+| FR-2 | 1 | The lecturer opens a lesson room (default title "‹course› – שבוע ‹n›") and gets a student URL shown as a join QR. | M |
+| FR-3 | 1 | The lecturer imports a CSV roster (first/last name or full name, e-mail, optional group). The ID column is ignored. E-mails are stored only as salted HMAC. | M |
+| FR-4 | 1 | The lecturer screen shows the live barcode: an HMAC-signed, room-bound QR per 250 ms slot and a 20 Hz shimmer border. | M |
+| FR-5 | 1 | A student picks a name from the roster and chooses in class or remote. No ID or e-mail is asked. Each join gets its own signed session. | M |
+| FR-6 | 1 | Remote: state `remote` (✓ remote). No network or barcode check. | M |
+| FR-7 | 1 | In class requires (a) the client IP inside the campus ranges, checked at join and again at scan, and (b) a barcode capture of ≥5 distinct codes spanning ≥2 s, each ≤6 s old by the server clock, in order, not reused for that name, from this room. Then the student picks one of 9 areas and becomes `present` with "ברוך הבא ‹name›". | M |
+| FR-8 | 1 | Client IP: forwarded headers are honoured only from trusted proxies; `CF-Connecting-IP` only from loopback; else the right-most untrusted `X-Forwarded-For` hop; never a body field. | M |
+| FR-9 | 1 | Duplicate names: (1) a verified in-class claim flags remote claims of the same name; (2) two verified in-class claims → both must re-pick; (3) the same name again → the lecturer decides. The lecturer can accept or reject any claim. | S |
+| FR-10 | 1 | **Online sheet:** the dashboard shows counts (in class, remote, in progress, conflicts), the list with ✓, a 3×3 map, conflicts. **Offline sheet:** CSV/XLSX export of name, mode, state, area, time. | M |
+| FR-11 | 3 | Polls: 2–6 options, optional correct answer, one answer per student, close poll. Students see counts only after voting or closing. | M |
+| FR-12 | 2 | Students in `present` or `remote` post notes and questions and up-vote questions. The dashboard lists notes and sorts questions by votes. | M |
+| FR-13 | — | The lecturer uploads homework files (≤5 MB); checked-in students download them as attachments. | C |
+| FR-14 | 4 | Summary: the lecturer uploads the lesson transcript (VTT/TXT from Zoom/Meet) and either writes a summary or gives provider/model/API key to have the agent write it from the transcript, polls and questions; then all students of the room see it. A student may generate a private summary with their own key. | S |
+| FR-15 | 5 | Homework review: a checked-in student submits a text answer (paste or text/code file, ≤100,000 characters; a new one replaces the old). The student (own submission only) or the lecturer (any) asks for a review with provider/model/key. The agent reads the submission, compares it with the other submissions through a Jaccard-similarity tool, and returns strengths, issues and an anonymous comparison, marked "not a grade". Needs at least 2 submissions in the room. | S |
+
+## 5. Non-functional requirements
+
+| ID | Concern | Requirement | Verified by |
+| --- | --- | --- | --- |
+| NFR-P1 | Performance | A room handles a 150-student hall: 150 full in-class check-ins in < 15 s server time; dashboard response < 0.5 s. (Measured: ~10 ms per check-in, 6 ms dashboard.) | `test_a_class_of_150_checks_in_quickly` |
+| NFR-P2 | Performance | Dashboard and phone refresh every 2 s; a poll answer appears on the dashboard within one refresh. | Demo script |
+| NFR-U1 | Usability | Check-in takes at most 4 taps after scanning the join QR (name, mode, 2 s hold, area). Hebrew RTL pages, one step per screen, works in iOS Safari and Android Chrome. | Real-life table, tools report |
+| NFR-U2 | Usability | No install: the student app is a web page opened from a QR. | Demo |
+| NFR-S1 | Security | Lecturer key 256 bits, from env or a mode-600 file, never printed or committed. | `test_lecturer.py` |
+| NFR-S2 | Security | Every student request after join is signed (HMAC-SHA256, timestamp ±60 s, single-use nonce). | `test_lesson.py::test_unsigned_or_pending_students_cannot_post` |
+| NFR-S3 | Security | LLM API keys are used for one request only: never stored, logged or returned. | `test_lesson.py`, `test_homework_review.py` |
+| NFR-PR1 | Privacy | No ID number stored; no e-mail in any response, list or export; the LLM sees pseudonyms and `[name]` only. | `test_emails_and_id_numbers_never_leave_the_server`, `test_lecturer_review_compares_anonymously_and_drops_the_key` |
+| NFR-A1 | Availability | In memory; a restart loses lessons (export first). A model failure returns an error, never invented text. | `test_agent.py` |
+| NFR-M1 | Maintainability | Automated tests ≥ 60, line coverage ≥ 80% (now 67 tests, 84%). | `pytest --cov` |
+
+## 6. Threat model
 
 | Threat | Mitigation | Residual |
 | --- | --- | --- |
-| Student at home sends a photo of the barcode | Codes change every 250 ms; ≥5 distinct over 2 s; 6 s freshness; network range | — |
-| Live video relay from a classmate | Off-campus IPs are refused | A relay to someone else on the campus network |
+| Student at home gets a photo of the barcode | Codes change every 250 ms; ≥5 distinct over 2 s; 6 s freshness; campus network required | — (a photo holds one code; home is off campus) |
+| Video of the screen replayed later | 6 s freshness; single use per name | A replay within 6 s from the campus network |
+| Live video relay from a classmate | Off-campus IPs are refused | A relay to someone else on the campus network (e.g. a dorm) |
 | Forged IP headers | Trusted-proxy rules (FR-8) | A compromised proxy |
 | Reused or forged codes | Per-slot HMAC with the room key, single use per name, room binding | Leaked master secret |
-| Picking a classmate's name | Duplicate stages; e-mail code; lecturer | An absent classmate's name picked in class is not detected unless they also join |
+| Picking a classmate's name | Duplicate stages; lecturer decision | An absent classmate's name picked in class is not detected unless they also join |
 | Forged student requests | Per-session HMAC signature, timestamp and nonce | Stolen phone session |
 | Lecturer key guessing | 256-bit key, HMAC compare, rate limit | Key disclosure by the lecturer |
-| Data leakage | No emails or ids out; keys dropped after use | Server memory is trusted |
+| Data leakage to the LLM | Pseudonyms, name redaction, read-only tools | Personal details a student writes inside a free-text answer |
+| Copying homework from a classmate | The review compares submissions and reports similarity | The tool flags similarity; the lecturer decides |

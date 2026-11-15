@@ -10,29 +10,38 @@ Source: `docs/diagrams/components.puml`.
 
 | Component | Responsibility | Talks to |
 | --- | --- | --- |
-| Lecturer page (`lecturer.html/js`) | Key sign-in and greeting, open lesson, roster import, join QR, live barcode (QR + shimmer canvas), dashboard, conflict buttons, polls, homework upload, summary, export. | `/api/...` with `X-Lecturer-Session`. |
-| Student page (`student.html/js`) | Name list, בכיתה/מרחוק, camera scan, area map, re-pick popup, code entry, note/question/poll, homework download, summary. | `/api/...`, every call after join signed with the session key (HMAC, timestamp, nonce). |
+| Lecturer page (`lecturer.html/js`) | Key sign-in and greeting, open lesson, roster import, join QR, live barcode (QR + shimmer canvas), dashboard, conflict buttons, polls, homework files, submissions + AI review, summary, export. | `/api/...` with `X-Lecturer-Session`. |
+| Student page (`student.html/js`) | Name list, בכיתה/מרחוק, camera scan, area map, re-pick popup, note/question/poll, homework download, homework submission + AI review, summary. | `/api/...`; every call after join signed with the session key (HMAC, timestamp, nonce). |
 | `qr.js` / `jsqr.js` | Draw QR codes / decode camera frames. | Local only. |
 
 ## Server (`demo-web/app/`)
 
 | Component | Responsibility | Interface |
 | --- | --- | --- |
-| HTTP API (`main.py`) | Routes, lecturer/student auth, JSON errors, file responses. | REST under `/api`. |
+| HTTP API (`main.py`) | Routes, lecturer/student auth, JSON errors, file responses, one place that builds an LLM provider and drops the key (`_run_llm`). | REST under `/api`. |
 | `LecturerAuth` | HMAC of the lecturer key, rate limit, session tokens. | `sign_in`, `check`, `sign_out`. |
-| `Settings` (`config.py`) | Env and key file, campus ranges, SMTP, greeting. | `from_env`. |
-| `Store` / `Room` | In-memory rooms, polls, notes, questions, homework files, summary; agent snapshot with names removed. | Methods on `Store`. |
-| `RoomRoster` | CSV import, salted email HMAC, in-memory address for the code. | `replace_from_csv`, `public_names`, `get`, `email_for`. |
-| `CheckinBook` | Claims, network + barcode gate, area, duplicate stages, e-mail challenges, lecturer decisions. | `join`, `submit_barcode`, `choose_area`, `repick`, `submit_code`, `decide`. |
+| `Settings` (`config.py`) | Env and key file, campus ranges, greeting. | `from_env`. |
+| `Store` / `Room` | In-memory rooms, polls, notes, questions, homework files, submissions, summary; anonymous agent snapshot. | Methods on `Store`. |
+| `RoomRoster` | CSV import, salted e-mail HMAC, optional group filter. | `replace_from_csv`, `public_names`, `get`. |
+| `CheckinBook` | Claims, network + barcode gate, area, duplicate stages, lecturer decisions. | `join`, `submit_barcode`, `choose_area`, `repick`, `decide`. |
 | `ScreenQrService` | Issue and verify signed 250 ms codes and the shimmer seed. | `issue`, `verify_sequence`. |
 | `net.client_ip` | Real client IP behind trusted proxies; range match. | `client_ip`, `subnet_status`. |
 | `SessionBook` | Per-phone session secrets and signed-request verification. | `issue`, `verify`. |
-| `Mailer` | SMTP send of the one-time code, demo override, demo fallback. | `send_code`. |
 | `ExportService` | CSV/XLSX sheet. | `to_csv`, `to_xlsx`. |
-| `SummaryService` / `LessonAgent` / `LLMClient` | Tool-calling summary from polls, notes, questions and transcript. | `summarize`. |
+| `SummaryService` / `HomeworkReviewService` | Run the agent for feature 4 / feature 5. | `summarize`, `review`. |
+| `LessonAgent` + `ToolRegistry` | Tool-calling loop over read-only, anonymous data tools; validates the final report. | `run(task, snapshot)`. |
+| `LLMClient` + providers | One interface over OpenAI-compatible, Anthropic and Gemini APIs. | `complete(messages, tools)`. |
 
 ## External
 
-- **Mail server** (SMTP, optional) — receives the one-time code.
 - **LLM provider** (optional) — called only when someone supplies a key.
 - **Render / cloudflared** — HTTPS in front of the app; the proxy appends the client IP.
+
+## Client IP behind a proxy
+
+The campus check (factor 1) depends on reading the phone's real public IP, which arrives through a proxy:
+
+- Forwarded headers are trusted only from `ZOOMODLE_TRUSTED_PROXIES`.
+- `CF-Connecting-IP` is accepted only from loopback (cloudflared on the same laptop).
+- Otherwise the right-most `X-Forwarded-For` hop that is not a trusted proxy is used — on Render, the hop Render's proxy appended. A browser-supplied left-most hop is ignored.
+- On Render set `ZOOMODLE_MASTER_SECRET` and `ZOOMODLE_LECTURER_KEY` in the dashboard; `FORWARDED_ALLOW_IPS` stays `127.0.0.1`.

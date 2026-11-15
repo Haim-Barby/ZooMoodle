@@ -14,19 +14,20 @@ remote --> flagged_remote : same name verified in class\nor picked remotely agai
 needs_area --> repick : another verified in-class\nclaim on the same name
 present --> repick : another verified in-class\nclaim on the same name
 repick --> present : repick(other free name)
-repick --> email_code : repick(same name again)\n/ one-time code to the roster e-mail
-email_code --> present : submit_code(correct)
-email_code --> rejected : other phone typed the code /\nexpired (5 min) / 3 wrong tries
+repick --> lecturer_code : repick(same name again)\n/ one-time code on the lecturer dashboard
+lecturer_code --> present : submit_code(correct)\n[typed on this phone by the lecturer]
+lecturer_code --> lecturer_code : wrong code / code renewed
+lecturer_code --> rejected : code typed on the other phone /\nlecturer reject
 
 flagged_remote --> remote : lecturer accept
 flagged_remote --> rejected : lecturer reject
 
-note right of email_code
-  Decided automatically:
-  whoever owns the e-mail
-  (e.g. Gmail) gets the name
+note right of lecturer_code
+  The lecturer walks to the real
+  student and types the code there
 end note
 present : ✓ in class
 remote : ✓ remote
+rejected : may start over\nwith another name
 rejected --> [*]
 @enduml

@@ -1,12 +1,11 @@
 @startuml seq-duplicate
-title Duplicate name – two phones in class claim "Dana Levi" (decided automatically)
+title Duplicate name – two phones in class claim "Dana Levi"
 
 actor "Phone A" as A
 actor "Phone B" as B
+actor Lecturer as L
 participant "HTTP API" as API
 participant CheckinBook as CB
-participant Mailer as Mail
-participant "Gmail\n(SMTP)" as Gmail
 
 A -> API : join + live scan as "Dana"
 API -> CB : submit_barcode(A)
@@ -26,16 +25,19 @@ alt B picks another free name
 else both pick "Dana" again
   B -> API : repick("Dana")
   API -> CB : repick(B, Dana)
-  CB -> CB : already re-picked -> stage 3
-  CB -> Mail : send_code(roster e-mail of Dana, 6 digits)
-  Mail -> Gmail : SMTP (smtp.gmail.com, App Password)
-  CB --> API : A, B -> email_code
-  API --> A : "enter the code from your e-mail"
-  API --> B : "enter the code from your e-mail"
-  A -> API : email-code(123456)
-  API -> CB : submit_code(A) [HMAC match, <5 min, <3 tries]
-  CB --> API : A present, B rejected
+  CB -> CB : already re-picked -> stage 3\nnew one-time code (6 digits, HMAC-stored)
+  CB --> API : A, B -> lecturer_code
+  API --> A : "the lecturer will come to you"
+  API --> B : "the lecturer will come to you"
+  L -> API : GET dashboard
+  API --> L : conflict "Dana" + code 123456 (renews every 2 min)
+  L -> A : walks to the real Dana
+  L -> API : types 123456 on phone A\nPOST /name-code
+  API -> CB : submit_code(A) [HMAC match, not expired, <3 tries]
+  CB --> API : A present (owner), B rejected, code closed
+  API --> A : "welcome Dana"
   API --> B : "not approved – start over"
-  note over CB : expiry or all tries used ->\nevery claim on "Dana" rejected
+  B -> API : start over: join + live scan as "Yossi"
+  note over CB : wrong code -> refused (3 tries per phone)\n6 wrong tries or 2 min -> a new code
 end
 @enduml

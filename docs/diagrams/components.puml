@@ -22,11 +22,9 @@ package "ZooMoodle server (FastAPI)" {
   [ScreenQrService] as QR
   [net.client_ip] as NET
   [SessionBook] as SB
-  [Mailer] as ML
   [ExportService] as EX
   [SummaryService / HomeworkReviewService\n+ LessonAgent] as AG
 }
-cloud "SMTP (Gmail)" as SMTP
 cloud "LLM provider" as LLM
 
 LP --> PX : X-Lecturer-Session
@@ -43,8 +41,6 @@ API --> ST
 ST --> RR
 ST --> CB
 CB --> QR
-CB --> ML
-ML --> SMTP : one-time code
 API --> EX
 API --> AG
 AG --> LLM

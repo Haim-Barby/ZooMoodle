@@ -11,7 +11,7 @@ Source: `docs/diagrams/components.puml`.
 | Component | Responsibility | Talks to |
 | --- | --- | --- |
 | Lecturer page (`lecturer.html/js`) | Key sign-in and greeting, open lesson, roster import, join QR, live barcode (QR + shimmer canvas), dashboard, conflict buttons, polls, homework files, submissions + AI review, summary, export. | `/api/...` with `X-Lecturer-Session`. |
-| Student page (`student.html/js`) | Name list, בכיתה/מרחוק, camera scan, area map, re-pick popup, e-mail code box, start over, note/question/poll, homework download, homework submission + AI review, summary. | `/api/...`; every call after join signed with the session key (HMAC, timestamp, nonce). |
+| Student page (`student.html/js`) | Name list, בכיתה/מרחוק, camera scan, area map, re-pick popup, lecturer-code box, start over, note/question/poll, homework download, homework submission + AI review, summary. | `/api/...`; every call after join signed with the session key (HMAC, timestamp, nonce). |
 | `qr.js` / `jsqr.js` | Draw QR codes / decode camera frames. | Local only. |
 
 ## Server (`demo-web/app/`)
@@ -20,11 +20,10 @@ Source: `docs/diagrams/components.puml`.
 | --- | --- | --- |
 | HTTP API (`main.py`) | Routes, lecturer/student auth, JSON errors, file responses, one place that builds an LLM provider and drops the key (`_run_llm`). | REST under `/api`. |
 | `LecturerAuth` | HMAC of the lecturer key, rate limit, session tokens. | `sign_in`, `check`, `sign_out`. |
-| `Settings` (`config.py`) | Env and key file, campus ranges, SMTP (Gmail), greeting. | `from_env`. |
+| `Settings` (`config.py`) | Env and key file, campus ranges, trusted proxies, greeting. | `from_env`. |
 | `Store` / `Room` | In-memory rooms, polls, notes, questions, homework files, submissions, summary; anonymous agent snapshot. | Methods on `Store`. |
-| `RoomRoster` | CSV import, salted e-mail HMAC, in-memory address for the code, optional group filter. | `replace_from_csv`, `public_names`, `get`, `email_for`. |
-| `Mailer` | Sends the one-time code over SMTP (Gmail), demo override, demo fallback. | `send_code`. |
-| `CheckinBook` | Claims, network + barcode gate, area, duplicate stages, one-time e-mail challenges, lecturer override. | `join`, `submit_barcode`, `choose_area`, `repick`, `submit_code`, `decide`. |
+| `RoomRoster` | CSV import (names only), optional group filter. | `replace_from_csv`, `public_names`, `get`. |
+| `CheckinBook` | Claims, network + barcode gate, area, duplicate stages, one-time lecturer codes, lecturer override. | `join`, `submit_barcode`, `choose_area`, `repick`, `submit_code`, `decide`. |
 | `ScreenQrService` | Issue and verify signed 250 ms codes and the shimmer seed. | `issue`, `verify_sequence`. |
 | `net.client_ip` | Real client IP behind trusted proxies; range match. | `client_ip`, `subnet_status`. |
 | `SessionBook` | Per-phone session secrets and signed-request verification. | `issue`, `verify`. |
@@ -35,7 +34,6 @@ Source: `docs/diagrams/components.puml`.
 
 ## External
 
-- **Mail server** (Gmail SMTP, optional) — receives the one-time code for a duplicate name and delivers it to the student's address from the class list.
 - **LLM provider** (optional) — called only when someone supplies a key.
 - **Render / cloudflared** — HTTPS in front of the app; the proxy appends the client IP.
 

@@ -17,9 +17,9 @@ const ERRORS = {
   room_closed: "השיעור נסגר.",
   unknown_room: "השיעור לא נמצא. סרוק שוב את קוד ההצטרפות.",
   not_checked_in: "צריך לסיים את הכניסה לשיעור קודם.",
-  bad_code: "הקוד שגוי. יש עד 3 ניסיונות.",
-  code_expired: "הקוד פג. הכניסה עם השם הזה נדחתה – התחל מחדש.",
-  code_attempts: "נגמרו הניסיונות. הכניסה עם השם הזה נדחתה – התחל מחדש.",
+  bad_code: "הקוד שגוי. יש עד 3 ניסיונות בטלפון הזה.",
+  code_not_requested: "אין כרגע קוד לשם הזה.",
+  code_attempts: "נגמרו הניסיונות בטלפון הזה. המרצה יכול לאשר את השם מהלוח שלו.",
   already_answered: "כבר ענית על הסקר הזה.",
   session_expired: "השעון בטלפון לא מכוון. כוון שעה אוטומטית ונסה שוב.",
 };
@@ -103,13 +103,13 @@ function render(me) {
   }
   lastShown = me.state;
   stopScan(); step("step-wait");
-  $("#code-box").hidden = me.state !== "email_code";
+  $("#code-box").hidden = me.state !== "lecturer_code";
   $("#start-over").hidden = me.state !== "rejected";
   const texts = {
     repick: ["שם כפול", "בחר שוב את השם שלך בחלון שנפתח."],
-    email_code: ["אימות במייל", me.email_sent ? "שלחנו קוד בן 6 ספרות למייל של השם הזה מרשימת הכיתה. מי שמקליד אותו מקבל את השם, והמכשיר השני נדחה." : "שלחנו קוד בן 6 ספרות לבעל השם. בהדגמה (בלי מייל) המרצה רואה את הקוד על המסך שלו."],
+    lecturer_code: ["המרצה יגיע אליך", "עוד מכשיר בכיתה בחר את אותו השם. המרצה יגיע לבעל השם האמיתי ויקליד כאן קוד חד־פעמי. המכשיר שבו הקוד הוקלד מקבל את השם."],
     flagged_remote: ["בבדיקה", "השם הזה נבחר גם במקום אחר. המרצה יחליט."],
-    rejected: ["לא אושר", "הכניסה עם השם הזה נדחתה: מכשיר אחר אימת אותו בקוד מהמייל, הקוד לא הוזן בזמן, או שהמרצה דחה. אפשר להתחיל מחדש."],
+    rejected: ["לא אושר", "המרצה נתן את השם הזה למכשיר אחר, או דחה את הכניסה. אפשר להתחיל מחדש ולהיכנס עם השם שלך."],
   }[me.state] || [me.state_text, ""];
   $("#wait-title").textContent = texts[0]; $("#wait-text").textContent = texts[1];
 }
@@ -167,7 +167,7 @@ $("#zones").addEventListener("click", async (e) => {
 });
 
 $("#code-send").addEventListener("click", async () => {
-  try { render(await call(R("/email-code"), "POST", { code: $("#code").value })); say(""); } catch (err) { say(err.code, err.message); refreshMe(); }
+  try { render(await call(R("/name-code"), "POST", { code: $("#code").value })); say(""); } catch (err) { say(err.code, err.message); refreshMe(); }
 });
 $("#start-over").addEventListener("click", () => {
   localStorage.removeItem(STORE_KEY); session = null; lastState = ""; lastShown = ""; say(""); step("step-name");

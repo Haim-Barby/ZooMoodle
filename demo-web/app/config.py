@@ -95,12 +95,6 @@ class Settings:
     course_week: int = 4
     campus_ranges: tuple[str, ...] = DEFAULT_CAMPUS_RANGES
     trusted_proxies: tuple[str, ...] = DEFAULT_TRUSTED_PROXIES
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    demo_email_override: str = ""
     llm_timeout_seconds: float = 20.0
     agent_max_steps: int = 8
     host: str = "0.0.0.0"
@@ -109,10 +103,6 @@ class Settings:
     @property
     def greeting(self) -> str:
         return f"שלום {self.lecturer_name}, השבוע שבוע {self.course_week} בקורס {self.course_name}"
-
-    @property
-    def smtp_configured(self) -> bool:
-        return bool(self.smtp_host and self.smtp_from)
 
     @staticmethod
     def from_env() -> "Settings":
@@ -144,12 +134,6 @@ class Settings:
             # An empty value (also the legacy ZOOMODLE_ALLOWED_SUBNETS="") means the default ranges.
             campus_ranges=_list("ZOOMODLE_CAMPUS_RANGES", ()) or _list("ZOOMODLE_ALLOWED_SUBNETS", ()) or DEFAULT_CAMPUS_RANGES,
             trusted_proxies=_list("ZOOMODLE_TRUSTED_PROXIES", DEFAULT_TRUSTED_PROXIES) or DEFAULT_TRUSTED_PROXIES,
-            smtp_host=_env("ZOOMODLE_SMTP_HOST"),
-            smtp_port=_int("ZOOMODLE_SMTP_PORT", 587),
-            smtp_user=_env("ZOOMODLE_SMTP_USER"),
-            smtp_password=_env("ZOOMODLE_SMTP_PASSWORD"),
-            smtp_from=_env("ZOOMODLE_SMTP_FROM") or _env("ZOOMODLE_SMTP_USER"),
-            demo_email_override=_env("DEMO_EMAIL_OVERRIDE"),
             llm_timeout_seconds=timeout,
             agent_max_steps=max(1, _int("ZOOMODLE_AGENT_MAX_STEPS", 8)),
             host=_env("ZOOMODLE_HOST", "0.0.0.0") or "0.0.0.0",

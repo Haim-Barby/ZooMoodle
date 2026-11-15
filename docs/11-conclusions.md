@@ -6,7 +6,7 @@ All five assignment features are in the demo app:
 
 | # | Feature | Result |
 | --- | --- | --- |
-| 1 | Attendance + spreadsheet | Two-factor in-class check-in (campus network + live barcode), remote join, automatic duplicate names (re-pick, then a one-time code to the student's Gmail), live dashboard, CSV/Excel export. |
+| 1 | Attendance + spreadsheet | Two-factor in-class check-in (campus network + live barcode), remote join, duplicate names (re-pick, then a one-time code the lecturer types on the real student's phone), live dashboard, CSV/Excel export. |
 | 2 | Comments | Notes, questions and up-votes from the phone. |
 | 3 | Polls | Created in seconds, answered from the phone, live counts. |
 | 4 | Lesson summary | Agent summary from the Zoom/Meet transcript plus polls and questions, published to the class. |
@@ -14,9 +14,9 @@ All five assignment features are in the demo app:
 
 | Environment | Command | Result |
 | --- | --- | --- |
-| Linux, Python 3.13, 15 Nov 2026 | `python -m pytest -q --cov=app` | 73 passed, 85% line coverage |
+| Linux, Python 3.13, 15 Nov 2026 | `python -m pytest -q --cov=app` | 74 passed, 85% line coverage |
 | Linux, in-process, 15 Nov 2026 | 150-student load test | ~10 ms per full check-in, 6 ms dashboard |
-| Headless Chrome against a local server, 15 Nov 2026 | `tests/manual/browser_run.py`, `browser_duplicates.py` | sign-in, roster, live barcode (README GIF), two submissions, review error path; duplicate name → code → automatic decision → start over — as specified |
+| Headless Chrome against a local server, 15 Nov 2026 | `tests/manual/browser_run.py`, `browser_duplicates.py` | sign-in, roster, live barcode (README GIF), two submissions, review error path; duplicate name → re-pick → lecturer code typed on phone A → phone B out → start over — as specified |
 | Headless Chrome, 11 Nov 2026 | earlier manual run | in-class check-in with real screen codes, still-photo rejection, duplicate popup |
 
 ## 2. How we reached the final check-in
@@ -30,7 +30,8 @@ The hardest question was how to prove "in class" (feature 1). We went through th
 | 11 Nov, morning | The ID digits were dropped; the student confirmed with the e-mail from the class list (kept only as a salted HMAC). The rotating QR became a flickering, video-like barcode: the phone holds on it for 2 s, and both the decoded frames and the change between them are checked (`6e50409`). | A code that changes every 1–2 s can still be photographed and sent; a moving pattern held for 2 s cannot. |
 | 11 Nov, midday | Rebuilt around two factors: the server reads the phone's public IP and requires the Ariel University ranges (`192.114.48.0/21`, `192.114.56.0/23`, checked in RIPE), plus the 2 s live barcode (signed 250 ms codes, single use). Nothing is typed at entry; the e-mail is used only for duplicate names. Lecturer key sign-in and a classroom area were added (`3842b85`). | Each factor is weak alone (a dorm is on the campus network, a friend can send a photo); together they mean "in the room", with one scan for the student. |
 | 11 Nov, afternoon | The first run on Render refused the Ariel Wi-Fi: the server saw a Cloudflare address instead of the phone's. Fixed by reading `CF-Connecting-IP` from the trusted proxy (`808e863`). Poll delivery to phones was fixed the same day (`dad04b9`). | Test in the real deployment, not only locally. |
-| 15 Nov | The scope was set to the five features: the homework review (feature 5) is on, the private student summary and a diagram endpoint are out, duplicate names are decided by a one-time code to the student's e-mail, and barcode codes must be at most 3 s old (`44a5ac5`, `08f47d6`, `6a147a1`). | Every feature was checked against the assignment. |
+| 15 Nov | The scope was set to the five features: the homework review (feature 5) is on, the private student summary and a diagram endpoint are out, and barcode codes must be at most 3 s old (`44a5ac5`, `08f47d6`, `6a147a1`). Duplicate names were first decided by a one-time code e-mailed (Gmail SMTP) to the address in the class list. | Every feature was checked against the assignment. |
+| 15 Nov, evening | The e-mail code was dropped: after the re-pick the lecturer dashboard shows a one-time code, the lecturer types it on the real student's phone, and the other phone is removed and may check in with another name. SMTP settings and stored e-mail addresses were removed. | Mail setup (App Passwords, spam, a class list with the right addresses) was a lot of moving parts for a rare case; the lecturer in the room is a simpler and stronger tie-breaker. |
 
 ## 3. Lessons learned
 
@@ -42,7 +43,7 @@ The hardest question was how to prove "in class" (feature 1). We went through th
 
 ## 4. Limits and remaining work
 
-- Not yet tried with a real phone camera on a projector, on the real campus Wi-Fi through Render, with real Gmail delivery, or with a live model (planned 16–23 Nov).
+- Not yet tried with a real phone camera on a projector, on the real campus Wi-Fi through Render, with the lecturer-code step on two real phones, or with a live model (planned 16–23 Nov).
 - A live video relay to someone else on the campus network can still pass.
 - An absent student's name can be used in class if nobody else claims it; the lecturer sees the list and the class map.
 - The lesson summary uses the transcript, not the video itself.
@@ -56,7 +57,7 @@ The hardest question was how to prove "in class" (feature 1). We went through th
 | Date, room, phones | | |
 | Greeting | | |
 | In class (Wi-Fi + scan) / off-campus refused / screenshot refused | | |
-| Duplicate name → Gmail code → automatic decision | | |
+| Duplicate name → lecturer code on the real phone → other phone out | | |
 | Poll, note, question | | |
 | Homework review, lesson summary (live model) | | |
 | Export | | |

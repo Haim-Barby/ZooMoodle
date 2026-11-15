@@ -13,7 +13,6 @@ from app.checkin import CheckinBook
 from app.config import Settings
 from app.domain import SEAT_ZONES, Comment, HomeworkFile, Poll, Question, Submission
 from app.llm.tools import pseudonym, redact
-from app.mailer import Mailer
 from app.roster import RoomRoster
 from app.screen_qr import ScreenQrService
 from app.session_keys import SessionBook
@@ -81,7 +80,7 @@ def derive_room_key(master: bytes, salt: bytes) -> bytes:
 
 
 class Room:
-    def __init__(self, room_id: str, title: str, key: bytes, settings: Settings, mailer: Mailer):
+    def __init__(self, room_id: str, title: str, key: bytes, settings: Settings):
         self.id = room_id
         self.title = title
         self.key = key
@@ -89,7 +88,7 @@ class Room:
         self.closed = False
         self.roster = RoomRoster(settings.master_secret)
         self.screen_qr = ScreenQrService()
-        self.checkin = CheckinBook(settings.master_secret, self.roster, self.screen_qr, mailer, settings.course_name)
+        self.checkin = CheckinBook(settings.master_secret, self.roster, self.screen_qr)
         self.sessions = SessionBook()
         self.polls: list[Poll] = []
         self.comments: list[Comment] = []
@@ -102,9 +101,8 @@ class Room:
 
 
 class Store:
-    def __init__(self, settings: Settings, mailer: Mailer | None = None):
+    def __init__(self, settings: Settings):
         self.settings = settings
-        self.mailer = mailer or Mailer(settings)
         self.rooms: dict[str, Room] = {}
 
     def create_room(self, title: str) -> Room:
@@ -113,7 +111,7 @@ class Store:
         room_id = secrets.token_hex(4)
         while room_id in self.rooms:
             room_id = secrets.token_hex(4)
-        room = Room(room_id, title, derive_room_key(self.settings.master_secret, os.urandom(16)), self.settings, self.mailer)
+        room = Room(room_id, title, derive_room_key(self.settings.master_secret, os.urandom(16)), self.settings)
         self.rooms[room_id] = room
         return room
 

@@ -1,18 +1,15 @@
 """Room roster import.
 
-The national id column is ignored and not stored. Each email is kept as a
-salted HMAC under the server master secret. The plain address is held only
-in server memory, on a field that is excluded from repr, so the duplicate-name
-step can send a one-time code to it. No API response or export contains it.
+Only names (and the optional group) are kept. The national id column is
+ignored. The e-mail column is read only to skip duplicate rows of the same
+student during import; it is not stored, returned or exported.
 """
 
 from __future__ import annotations
 
 import csv
 import hashlib
-import hmac
 import io
-import os
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -59,11 +56,6 @@ def is_valid_email(value: str) -> bool:
     return True
 
 
-def email_mac(master: bytes, salt: bytes, entry_id: str, email: str) -> bytes:
-    message = salt + b"|" + entry_id.encode("utf-8") + b"|" + normalize_email(email).encode("utf-8")
-    return hmac.new(master, message, hashlib.sha256).digest()
-
-
 def _pick_header(indexed: dict[str, str], aliases: frozenset[str]) -> str | None:
     for key, original in indexed.items():
         if key in aliases:
@@ -86,9 +78,6 @@ class RosterEntry:
     given: str
     family: str
     group: str
-    salt: bytes
-    verifier: bytes
-    email: str = field(default="", repr=False, compare=False)
 
     @property
     def display(self) -> str:
@@ -114,7 +103,7 @@ class RateLimiter:
 
 
 def parse_roster_csv(text: str) -> tuple[list[dict], dict]:
-    """Return rows ready to seal, plus counts. Full ids and emails are not returned."""
+    """Return name rows plus counts. Ids and e-mails are not returned."""
     if text.startswith("\ufeff"):
         text = text.lstrip("\ufeff")
     reader = csv.DictReader(io.StringIO(text))
@@ -151,7 +140,7 @@ def parse_roster_csv(text: str) -> tuple[list[dict], dict]:
             stats["duplicates"] += 1
             continue
         seen.add(digest)
-        rows.append({"given": given, "family": family, "email": email, "group": group})
+        rows.append({"given": given, "family": family, "group": group})
         stats["groups"][group] = stats["groups"].get(group, 0) + 1
     stats["imported"] = len(rows)
     return rows, stats
@@ -171,16 +160,11 @@ class RoomRoster:
         sealed: dict[str, RosterEntry] = {}
         for row in rows:
             entry_id = secrets.token_hex(8)
-            salt = os.urandom(16)
-            verifier = email_mac(self.master, salt, entry_id, row["email"])
             sealed[entry_id] = RosterEntry(
                 id=entry_id,
                 given=row["given"],
                 family=row["family"],
                 group=row["group"],
-                salt=salt,
-                verifier=verifier,
-                email=row["email"],
             )
         self.entries = sealed
         self.selected_group = None
@@ -222,8 +206,3 @@ class RoomRoster:
         if entry is None or not self._selected(entry):
             return None
         return entry
-
-    def email_for(self, entry_id: str) -> str:
-        """Server-side only: the address the one-time code goes to."""
-        entry = self.entries.get(entry_id or "")
-        return entry.email if entry else ""

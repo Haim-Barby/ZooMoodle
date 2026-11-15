@@ -229,16 +229,6 @@ $("#sub-review").addEventListener("click", async () => {
   finally { key.value = ""; }
 });
 
-$("#my-summary").addEventListener("click", async () => {
-  const key = $("#llm-key");
-  try {
-    $("#summary").textContent = "יוצר סיכום…";
-    const r = await call(R("/summary/generate"), "POST", { provider: $("#llm-provider").value, model: $("#llm-model").value, api_key: key.value });
-    $("#summary").textContent = r.text;
-  } catch (err) { $("#summary").textContent = err.message; }
-  finally { key.value = ""; }
-});
-
 (async function boot() {
   if (!roomId) { say("x", "חסר קוד שיעור. סרוק את קוד ההצטרפות שעל המסך."); return; }
   const info = await fetch(R("")).then((r) => r.json()).catch(() => ({}));

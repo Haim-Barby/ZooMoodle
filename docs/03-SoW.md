@@ -15,7 +15,7 @@ Design, and demo in class in 10 minutes, a simple phone-based teaching tool whos
 | 1. Attendance | Lecturer key sign-in with the course greeting, lesson rooms, roster CSV import, join QR, two-factor in-class check-in (campus network + live barcode), remote join, classroom area, three-stage duplicate-name resolution, live dashboard, CSV/XLSX export |
 | 2. Comments | Notes and questions from the phone, question up-votes |
 | 3. Polls | 2–6 options, optional correct answer, live counts, close |
-| 4. Summary | Transcript upload, LLM agent summary (or a manual one) published to the class; a student may make a private one |
+| 4. Summary | Transcript upload, LLM agent summary (or a manual one) published to the class |
 | 5. Homework review | Student submission, LLM review with anonymous comparison to other submissions, for the student or the lecturer |
 | Extra | Homework file upload/download by the lecturer |
 

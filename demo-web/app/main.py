@@ -512,11 +512,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/rooms/{room_id}/summary/generate")
     async def generate_summary(room_id: str, request: Request):
+        lecturer(request)
         raw = await request.body()
         room = room_of(room_id)
-        by_lecturer = is_lecturer(request)
-        if not by_lecturer:
-            _viewer(request, room, raw)
         snapshot, names, ids = app.state.store.snapshot(room)
 
         def run(provider):
@@ -525,9 +523,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         report = _run_llm(raw, run)
         text = _summary_text(report)
-        if by_lecturer:
-            room.summary, room.summary_source = text, "model"
-        return {"text": text, "published": by_lecturer}
+        room.summary, room.summary_source = text, "model"
+        return {"text": text, "published": True}
 
     # ----- misc ---------------------------------------------------------------------
     @app.exception_handler(StoreError)

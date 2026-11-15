@@ -40,7 +40,7 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | FR-11 | 3 | Polls: 2–6 options, optional correct answer, one answer per student, close poll. Students see counts only after voting or closing. | M |
 | FR-12 | 2 | Students in `present` or `remote` post notes and questions and up-vote questions. The dashboard lists notes and sorts questions by votes. | M |
 | FR-13 | — | The lecturer uploads homework files (≤5 MB); checked-in students download them as attachments. | C |
-| FR-14 | 4 | Summary: the lecturer uploads the lesson transcript (VTT/TXT from Zoom/Meet) and either writes a summary or gives provider/model/API key to have the agent write it from the transcript, polls and questions; then all students of the room see it. A student may generate a private summary with their own key. | S |
+| FR-14 | 4 | Summary: the lecturer uploads the lesson transcript (VTT/TXT from Zoom/Meet) and either writes a summary or gives provider/model/API key to have the agent write it from the transcript, polls and questions; then all students of the room see it. | S |
 | FR-15 | 5 | Homework review: a checked-in student submits a text answer (paste or text/code file, ≤100,000 characters; a new one replaces the old). The student (own submission only) or the lecturer (any) asks for a review with provider/model/key. The agent reads the submission, compares it with the other submissions through a Jaccard-similarity tool, and returns strengths, issues and an anonymous comparison, marked "not a grade". Needs at least 2 submissions in the room. | S |
 
 ## 5. Non-functional requirements

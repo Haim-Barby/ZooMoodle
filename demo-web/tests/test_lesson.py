@@ -145,15 +145,15 @@ def test_lecturer_summary_with_optional_key_is_published_and_key_not_kept(caplog
     assert SECRET_KEY not in made.text
 
 
-def test_student_summary_is_private_and_needs_no_lecturer():
+def test_only_the_lecturer_generates_the_summary():
     app, client = make_client()
     app.state.provider_factory = FakeProvider
     room_id, headers, inside, _remote = _students(app, client)
-    mine = signed(client, inside, "POST", f"/api/rooms/{room_id}/summary/generate", {"provider": "openai", "model": "m", "api_key": SECRET_KEY})
-    assert mine.status_code == 200 and mine.json()["published"] is False
+    student = signed(client, inside, "POST", f"/api/rooms/{room_id}/summary/generate", {"provider": "openai", "model": "m", "api_key": SECRET_KEY})
+    assert student.status_code == 401
     assert client.get(f"/api/rooms/{room_id}/summary", headers=headers).json()["text"] == ""
     assert SECRET_KEY not in _all_state_text(app)
-    missing = signed(client, inside, "POST", f"/api/rooms/{room_id}/summary/generate", {"provider": "openai", "model": "m"})
+    missing = client.post(f"/api/rooms/{room_id}/summary/generate", json={"provider": "openai", "model": "m"}, headers=headers)
     assert missing.status_code == 400 and missing.json()["error"] == "missing_key"
 
 

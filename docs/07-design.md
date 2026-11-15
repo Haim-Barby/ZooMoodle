@@ -68,7 +68,7 @@ The network is checked twice — when the student picks בכיתה and when the 
 
 ![Homework review](diagrams/seq-review.svg)
 
-`Store.snapshot` builds pseudonymous input (polls, notes, questions, transcript, submissions). `LessonAgent` must call a data tool before `produce_report`; the report must set `not_a_grade: true`. The lesson summary (feature 4) is the same loop with the `lesson_summary` task; a lecturer's summary is stored on the room, a student's is returned only to them. The API key lives only in the request.
+`Store.snapshot` builds pseudonymous input (polls, notes, questions, transcript, submissions). `LessonAgent` must call a data tool before `produce_report`; the report must set `not_a_grade: true`. The lesson summary (feature 4) is the same loop with the `lesson_summary` task; the lecturer's summary is stored on the room for all students. The API key lives only in the request.
 
 ## 5. Module map
 

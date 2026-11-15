@@ -38,7 +38,7 @@ python -m pytest -q --cov=app            # line coverage (84% on 15 Nov 2026)
 | FR-10 online/offline sheet | `main`, `ExportService` | counts and zones in the check-in tests; CSV/XLSX in the privacy test |
 | FR-11, FR-12 polls, notes, questions | `Store` | `test_lesson.py::test_poll_note_and_question_from_the_phone_reach_the_dashboard`, `test_poll_accepts_typed_separators_and_reaches_the_phone`, `test_unsigned_or_pending_students_cannot_post` |
 | FR-13 homework files | `Store`, `HomeworkFile` | `test_lesson.py::test_lecturer_uploads_homework_and_students_view_it` |
-| FR-14 summary, key not kept | `SummaryService`, `LessonAgent` | `test_lesson.py`: lecturer summary published + key absent from logs/state/response, student summary private, manual summary; `test_agent.py` (4) |
+| FR-14 summary, key not kept | `SummaryService`, `LessonAgent` | `test_lesson.py`: lecturer summary published + key absent from logs/state/response, only the lecturer generates it, manual summary; `test_agent.py` (4) |
 | FR-15 homework review + comparison | `HomeworkReviewService`, `ToolRegistry`, `Submission` | `test_homework_review.py` (5): submit/replace/list, lecturer review is anonymous + calls `compare_submissions` + drops the key, student only own, needs two submissions, Hebrew similarity |
 | NFR-P1 150 students | `CheckinBook`, `main` | `test_a_class_of_150_checks_in_quickly` |
 | LLM adapters | `BaseProvider` subclasses | `test_llm_connection.py` (7) |

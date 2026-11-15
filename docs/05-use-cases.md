@@ -60,7 +60,7 @@ Source: `docs/diagrams/usecases.puml`. Each use case starts with the client stor
 
 ## UC-10 Lesson summary
 **Story:** As a lecturer, I want a summary of the recorded lesson that also uses the polls and questions, so that students get a useful recap and I see what to repeat.
-**Accept:** after uploading the Zoom/Meet transcript, the summary is written by the agent (with a key) or by hand, and appears to all students of the room; a student may make a private one with their own key; keys are never stored, logged or returned. (FR-14)
+**Accept:** after uploading the Zoom/Meet transcript, the summary is written by the agent (with a key) or by hand, and appears to all students of the room; only the lecturer can generate it; keys are never stored, logged or returned. (FR-14)
 
 ## UC-11 Export the attendance sheet
 **Story:** As a lecturer, I want the attendance as a spreadsheet, so that I can keep it offline and upload it where I need.

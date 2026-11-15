@@ -16,7 +16,7 @@ A `Room` owns a `RoomRoster`, a `ScreenQrService`, a `CheckinBook`, a `SessionBo
 | Liveness | ≥5 distinct codes, ≥2 s span, increasing slots, gap ≤3 slots, ≤3 s old at receipt |
 | Network | client IP in `192.114.48.0/21`, `192.114.56.0/23` (configurable) |
 | Session | 32-byte secret → HKDF verifier; requests signed over method, path, body, time (±60 s), nonce |
-| One-time code | 6 digits, HMAC with salt, 5 min, 3 tries per phone / 6 total, single use; failure → all claims rejected |
+| One-time code | 6 digits, HMAC with salt, shown on the lecturer dashboard, renewed every 2 min, 3 tries per phone, a new code after 6 wrong tries, single use |
 | Submission | text ≤100,000 chars, one per student; similarity = Jaccard over Unicode word sets |
 
 ## 2. Object-oriented design
@@ -42,7 +42,7 @@ A `Room` owns a `RoomRoster`, a `ScreenQrService`, a `CheckinBook`, a `SessionBo
 
 ### Two design decisions
 
-- Duplicate names are **decided automatically**: after a re-pick, a one-time code goes to the student's own e-mail from the class list (Gmail SMTP). The right code wins and the others are rejected; a failed code rejects everyone. The lecturer can still override by hand. Ownership of the e-mail is a fair, automatic tie-breaker that does not stop the lesson.
+- Duplicate names: after a re-pick, the **lecturer decides on the spot**. The dashboard shows a one-time code; the lecturer walks to the real student and types it on that phone, which gets the name, and the other phone is removed (it may check in again with another name). The lecturer sees who is sitting there, and nothing depends on students' contact details or an outside service. The accept/reject buttons stay for any other case.
 - The homework review (feature 5) **reuses the lesson agent and its tools**: the patterns above make it one service class, three routes and two UI cards.
 
 ## 3. Claim state machine
@@ -63,7 +63,7 @@ The network is checked twice — when the student picks בכיתה and when the 
 
 1. A verified in-class claim sets every remote claim of that name to `flagged_remote`.
 2. Two verified in-class claims → both `repick`. A different free name resolves it.
-3. A claim that already re-picked collides again → `email_code`: one code is sent to the roster address (or `DEMO_EMAIL_OVERRIDE`). The first correct code makes that claim the owner; the others → `rejected`.
+3. A claim that already re-picked collides again → `lecturer_code`: one code appears on the lecturer dashboard. The claim on whose phone it is typed becomes the owner; the others → `rejected` (they can start over with another name).
 4. Expiry or exhausted tries → every claim on the name → `rejected`; the students start over.
 5. The lecturer may still `decide(accept|reject)` any claim.
 
@@ -81,8 +81,7 @@ app/config.py         Settings, key file
 app/lecturer_auth.py  LecturerAuth
 app/store.py          Store, Room, snapshot
 app/domain.py         Poll, Comment, Question, HomeworkFile, Submission
-app/checkin.py        CheckinBook, Claim, EmailChallenge
-app/mailer.py         Mailer (SMTP / Gmail)
+app/checkin.py        CheckinBook, Claim, LecturerChallenge
 app/screen_qr.py      ScreenQrService
 app/net.py            client_ip, subnet_status
 app/session_keys.py   SessionBook

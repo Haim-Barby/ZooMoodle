@@ -18,7 +18,6 @@ from app.export_svc import ExportService
 from app.lecturer_auth import LecturerAuth, LecturerAuthError
 from app.llm.agent import AgentError, HomeworkReviewService, SummaryService
 from app.llm.providers import KEY_OPTIONAL, KNOWN_PROVIDERS, LLMClient, LLMConfig, ProviderFailure, build_provider
-from app.mailer import Mailer
 from app.net import client_ip, forwarded_debug, subnet_status
 from app.roster import RosterError
 from app.session_keys import SessionError, canonical_message
@@ -33,17 +32,17 @@ STATE_TEXT = {
     "present": "נוכח בכיתה",
     "flagged_remote": "בבדיקה: השם נבחר גם במקום אחר",
     "repick": "צריך לבחור שוב את השם",
-    "email_code": "ממתין לקוד מהמייל",
+    "lecturer_code": "ממתין לקוד מהמרצה",
     "rejected": "נדחה",
 }
 
 
-def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     _announce(settings)
     app = FastAPI(title="ZooMoodle")
     app.state.settings = settings
-    app.state.store = Store(settings, mailer)
+    app.state.store = Store(settings)
     app.state.auth = LecturerAuth(settings.master_secret, settings.lecturer_key)
     app.state.http_transport = None
     app.state.provider_factory = None
@@ -251,8 +250,9 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
             raise StoreError(exc.reason, exc.status) from exc
         return _me(room, claim)
 
-    @app.post("/api/rooms/{room_id}/email-code")
-    async def email_code(room_id: str, request: Request):
+    @app.post("/api/rooms/{room_id}/name-code")
+    async def name_code(room_id: str, request: Request):
+        """The lecturer types the dashboard code on the real student's phone."""
         raw = await request.body()
         room = open_room(room_id)
         claim = claim_for(room, _require_session(request, room, raw, write=True))
@@ -287,7 +287,6 @@ def create_app(settings: Settings | None = None, mailer: Mailer | None = None) -
             "homework": [_homework_dict(h) for h in room.homework],
             "summary": room.summary,
             "summary_source": room.summary_source,
-            "email_mode": "smtp" if app.state.store.mailer.configured else "demo",
         }
 
     @app.post("/api/rooms/{room_id}/conflicts/decide")
@@ -560,8 +559,6 @@ def _announce(settings: Settings) -> None:
         print(f"{verb} lecturer key file: {settings.lecturer_key_file} (the key itself is not printed)", flush=True)
     if settings.ephemeral_master_secret:
         print("ZOOMODLE_MASTER_SECRET is unset; rooms will not survive a restart.", flush=True)
-    if not settings.smtp_configured:
-        print("SMTP is not configured: duplicate-name codes are shown on the lecturer dashboard (demo mode).", flush=True)
 
 
 def _profile(settings: Settings) -> dict:
@@ -619,9 +616,6 @@ def _me(room, claim) -> dict:
     }
     if claim.state in (PRESENT, REMOTE):
         view["welcome"] = f"ברוך הבא {display}"
-    if claim.state == "email_code":
-        challenge = room.checkin.challenge_view(claim.entry_id)
-        view["email_sent"] = bool(challenge and challenge["sent"])
     return view
 
 
@@ -666,7 +660,7 @@ def _conflicts(room) -> list[dict]:
                     }
                     for c in claims
                 ],
-                "email": room.checkin.challenge_view(entry_id),
+                "lecturer_code": room.checkin.challenge_view(entry_id),
             }
         )
     return out

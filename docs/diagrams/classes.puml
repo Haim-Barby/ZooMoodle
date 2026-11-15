@@ -8,7 +8,6 @@ class Settings {
   lecturer_key
   campus_ranges
   trusted_proxies
-  smtp_* (Gmail)
   greeting()
 }
 class LecturerAuth {
@@ -33,12 +32,10 @@ class RoomRoster {
   entries
   replace_from_csv(csv)
   public_names()
-  email_for(entry_id)
 }
 class RosterEntry {
   id, given, family
-  salt, verifier(HMAC email)
-  -email (memory only, for the code)
+  group
 }
 class CheckinBook {
   claims
@@ -54,12 +51,9 @@ class Claim {
   state, zone
   verified, repicked, owner
 }
-class EmailChallenge {
+class LecturerChallenge {
   entry_id, code_mac, salt
-  expires_at, attempts, used
-}
-class Mailer {
-  send_code(email, name, course, code)
+  expires_at, attempts, closed
 }
 class ScreenQrService {
   issue(room_key, room_id)
@@ -119,8 +113,7 @@ Room *-- "*" HomeworkFile
 Room *-- "*" Submission
 RoomRoster *-- "*" RosterEntry
 CheckinBook *-- "*" Claim
-CheckinBook *-- "*" EmailChallenge
-CheckinBook --> Mailer
+CheckinBook *-- "*" LecturerChallenge
 CheckinBook --> ScreenQrService
 CheckinBook --> RoomRoster
 Claim ..> RosterEntry : entry_id

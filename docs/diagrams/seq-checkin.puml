@@ -29,7 +29,7 @@ CB -> QR : verify_sequence\n(>=5 codes, 2 s, <=3 s old, room, order)
 QR --> CB : ok / qr_static / qr_short / qr_stale
 CB -> CB : single use + resolve duplicate name
 alt name conflict
-  CB --> UI : flagged_remote / repick / email_code
+  CB --> UI : flagged_remote / repick / lecturer_code
 else free
   API --> UI : needs_area
   Student -> UI : pick area

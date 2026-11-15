@@ -19,4 +19,4 @@ def test_pages_are_hebrew_and_show_only_the_checkin_flow():
     # No e-mail or ID is typed at entry.
     assert "דוא״ל שלך" not in student and "תעודת זהות" not in student
     js = client.get("/static/student.js").text
-    assert "x-zoomoodle-signature" in js and "/barcode" in js and "/repick" in js and "/email-code" in js
+    assert "x-zoomoodle-signature" in js and "/barcode" in js and "/repick" in js and "/name-code" in js

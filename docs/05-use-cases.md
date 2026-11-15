@@ -39,16 +39,16 @@ Source: `docs/diagrams/usecases.puml`. Each use case starts with the client stor
 **Accept:** all alternatives above refuse the check-in; forged forwarding headers do not help. (FR-7, FR-8)
 
 ## UC-5 Duplicate name
-**Story:** As a lecturer, I want two phones that claim one name to be sorted out automatically, so that I do not stop the lesson. As a student, I want to prove the name is mine with my own e-mail, so that a classmate cannot take it.
+**Story:** As a lecturer, I want two phones that claim one name to be sorted out with one short step, so that the right student gets it. As a student, I want the lecturer to confirm the name is mine, so that a classmate cannot take it.
 
 | | |
 | --- | --- |
 | Precondition | Two phones verified in class (UC-4) with the same name. |
-| Main flow | 1. The system shows both phones a re-pick popup. 2. Both pick the same name again. 3. The system e-mails a 6-digit one-time code to that name's address from the class list (e.g. Gmail). 4. Both phones show "אימות במייל" with a code box. 5. The real owner types the code. 6. The system gives them the name ("ברוך הבא") and rejects the other phone ("לא אושר"). |
-| Alternatives | 2a. One phone picks another free name → both are resolved, no e-mail. 5a. Wrong code → "הקוד שגוי", up to 3 tries per phone. 5b. 5 minutes pass or all tries are used → every claim on the name is rejected; the students press "התחל מחדש". 3a. No SMTP configured → the code is shown only on the lecturer dashboard ("מצב הדגמה – המייל לא נשלח"). |
-| Postcondition | At most one phone holds the name; no lecturer action was needed. |
+| Main flow | 1. The system shows both phones a re-pick popup. 2. Both pick the same name again. 3. Both phones show "המרצה יגיע אליך" with a code box; the lecturer dashboard shows a 6-digit one-time code. 4. The lecturer walks to the real student and types the code on that phone. 5. The system gives that phone the name ("ברוך הבא") and removes the other phone from it ("לא אושר" + "התחל מחדש"). |
+| Alternatives | 2a. One phone picks another free name → both are resolved, no code. 4a. Wrong code → "הקוד שגוי", up to 3 tries per phone; 6 wrong tries in total → a new code on the dashboard. 4b. 2 minutes pass → a new code on the dashboard; the phones keep waiting. 4c. The lecturer presses accept or reject on the dashboard instead. 5a. The removed phone presses "התחל מחדש" and checks in again with its own name. |
+| Postcondition | At most one phone holds the name; the other phone can check in again with another name. |
 
-**Accept:** remote vs. verified in class → remote flagged; the code is never in a student response; the right code wins, the other phone is rejected; failure rejects all. (FR-9)
+**Accept:** remote vs. verified in class → remote flagged; re-pick resolves; the code is never in a student response; the phone the code is typed on gets the name and the other is removed; a wrong code is refused; the code works once; the removed phone can re-enter with another name. (FR-9)
 
 ## UC-6 Lecturer overrides a conflict
 **Story:** As a lecturer, I want to be able to give a disputed name to the right phone by hand, so that the sheet is correct even when the automatic flow is not enough (e.g. a flagged remote claim).

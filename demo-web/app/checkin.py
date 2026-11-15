@@ -9,12 +9,13 @@ Duplicate names, in stages:
   1. A verified in-class claim beats a remote claim on the same name; the
      remote claim is flagged for the lecturer.
   2. Two verified in-class claims on one name: both must re-pick their name.
-  3. Still the same name after a re-pick: a one-time code goes to the roster
-     e-mail of that name (e.g. the student's Gmail); whoever types it gets the
-     name and the other phones are rejected - no lecturer needed.
-  4. Nobody types the right code (5 min expiry or all tries used): every
-     claim on that name is rejected; the students start again.
-  The lecturer can still accept or reject any claim by hand.
+  3. Still the same name after a re-pick: the lecturer dashboard shows a
+     one-time 6-digit code for that name. The lecturer walks to the real
+     student and types the code on that student's phone. That phone gets the
+     name; the other phones are removed from the name and may check in again
+     with another name.
+  The code is single-use and renews itself every 2 minutes until it is used.
+  The lecturer can also accept or reject any claim by hand.
 """
 
 from __future__ import annotations
@@ -35,13 +36,13 @@ AREA = "needs_area"
 PRESENT = "present"
 FLAGGED = "flagged_remote"
 REPICK = "repick"
-EMAIL = "email_code"
+LECTURER_CODE = "lecturer_code"
 REJECTED = "rejected"
 
-CONFLICT_STATES = (FLAGGED, REPICK, EMAIL)
+CONFLICT_STATES = (FLAGGED, REPICK, LECTURER_CODE)
 ACTIVE_STATES = (REMOTE, PRESENT)
 
-CODE_SECONDS = 300
+CODE_SECONDS = 120
 CODE_ATTEMPTS_PER_CLAIM = 3
 CODE_ATTEMPTS_TOTAL = 6
 
@@ -68,7 +69,9 @@ class Claim:
 
 
 @dataclass
-class EmailChallenge:
+class LecturerChallenge:
+    """One-time code for a disputed name. Shown only on the lecturer dashboard."""
+
     id: str
     entry_id: str
     salt: bytes
@@ -76,27 +79,22 @@ class EmailChallenge:
     expires_at: float
     claim_ids: list = field(default_factory=list)
     attempts: dict = field(default_factory=dict)
-    used: bool = False
     closed: bool = False
-    sent: bool = False
-    demo_code: str = field(default="", repr=False)
-    error: str = ""
+    code: str = field(default="", repr=False)
 
 
 def _code_mac(master: bytes, salt: bytes, code: str) -> bytes:
-    return hmac.new(master, b"zoomoodle-email-code|" + salt + b"|" + code.encode(), hashlib.sha256).digest()
+    return hmac.new(master, b"zoomoodle-lecturer-code|" + salt + b"|" + code.encode(), hashlib.sha256).digest()
 
 
 class CheckinBook:
-    def __init__(self, master: bytes, roster, screen_qr: ScreenQrService, mailer=None, course: str = "", clock=None):
+    def __init__(self, master: bytes, roster, screen_qr: ScreenQrService, clock=None):
         self.master = master
         self.roster = roster
         self.screen_qr = screen_qr
-        self.mailer = mailer
-        self.course = course
         self._clock = clock or time.time
         self.claims: dict[str, Claim] = {}
-        self.challenges: dict[str, EmailChallenge] = {}
+        self.challenges: dict[str, LecturerChallenge] = {}
         self._qr_used: dict[str, set] = {}
 
     def now(self) -> float:
@@ -150,7 +148,7 @@ class CheckinBook:
     def choose_area(self, claim: Claim, zone: str) -> Claim:
         if zone not in SEAT_ZONES:
             raise CheckinError("bad_zone", 400)
-        if claim.verified and claim.state in (REPICK, EMAIL):
+        if claim.verified and claim.state in (REPICK, LECTURER_CODE):
             claim.zone = zone  # remembered; the name question is still open
             return claim
         if claim.state not in (AREA, PRESENT):
@@ -173,14 +171,15 @@ class CheckinBook:
         return claim
 
     def submit_code(self, claim: Claim, code: str) -> Claim:
+        """The lecturer types the dashboard code on the real student's phone."""
         self.expire()
-        if claim.state != EMAIL:
+        if claim.state != LECTURER_CODE:
             raise CheckinError("code_not_requested")
         challenge = self._open_challenge(claim.entry_id)
         if challenge is None or claim.id not in challenge.claim_ids:
-            raise CheckinError("code_expired")
+            raise CheckinError("code_not_requested")
         tries = challenge.attempts.get(claim.id, 0)
-        if tries >= CODE_ATTEMPTS_PER_CLAIM or sum(challenge.attempts.values()) >= CODE_ATTEMPTS_TOTAL:
+        if tries >= CODE_ATTEMPTS_PER_CLAIM:
             raise CheckinError("code_attempts", 429)
         candidate = "".join(ch for ch in str(code or "") if ch.isdigit())
         ok = len(candidate) == 6 and hmac.compare_digest(
@@ -188,22 +187,18 @@ class CheckinBook:
         )
         if not ok:
             challenge.attempts[claim.id] = tries + 1
-            if (
-                challenge.attempts[claim.id] >= CODE_ATTEMPTS_PER_CLAIM
-                and all(challenge.attempts.get(cid, 0) >= CODE_ATTEMPTS_PER_CLAIM for cid in challenge.claim_ids)
-            ) or sum(challenge.attempts.values()) >= CODE_ATTEMPTS_TOTAL:
-                self._escalate(challenge, "code_attempts")
+            if sum(challenge.attempts.values()) >= CODE_ATTEMPTS_TOTAL:
+                self._renew(challenge)
             raise CheckinError("bad_code", 401)
-        challenge.used = True
-        challenge.closed = True
-        challenge.demo_code = ""
+        self._close(challenge)
         claim.owner = True
+        claim.note = "lecturer_code"
         claim.state = PRESENT if claim.zone else AREA
         for other_id in challenge.claim_ids:
-            if other_id != claim.id and self.claims[other_id].state == EMAIL:
-                other = self.claims[other_id]
+            other = self.claims.get(other_id)
+            if other is not None and other.id != claim.id and other.state == LECTURER_CODE:
                 other.state = REJECTED
-                other.note = "other_device_confirmed_code"
+                other.note = "lecturer_gave_name_to_other"
         return claim
 
     def decide(self, claim_id: str, action: str) -> Claim:
@@ -229,15 +224,14 @@ class CheckinBook:
                 other.note = "lecturer_gave_name_to_other"
         for challenge in self.challenges.values():
             if challenge.entry_id == claim.entry_id:
-                challenge.closed = True
-                challenge.demo_code = ""
+                self._close(challenge)
         return claim
 
     def expire(self) -> None:
         now = self.now()
         for challenge in self.challenges.values():
             if not challenge.closed and now > challenge.expires_at:
-                self._escalate(challenge, "code_expired")
+                self._renew(challenge)
 
     # ----- internals -----------------------------------------------------
     def _resolve(self, entry_id: str) -> None:
@@ -251,7 +245,7 @@ class CheckinBook:
                     c.state, c.note = FLAGGED, "name_already_confirmed"
                 elif c.verified and c.state in (AREA, PRESENT):
                     if c.repicked:
-                        c.state, c.note = REJECTED, "name_confirmed_by_code"
+                        c.state, c.note = REJECTED, "name_given_by_lecturer"
                     else:
                         c.state = REPICK
             return
@@ -263,57 +257,50 @@ class CheckinBook:
         elif len(remote) > 1:
             for c in remote:
                 c.state, c.note = FLAGGED, "same_name_remote"
-        contenders = [c for c in in_class if c.state in (AREA, PRESENT, EMAIL)]
+        contenders = [c for c in in_class if c.state in (AREA, PRESENT, LECTURER_CODE)]
         if len(contenders) < 2:
             return
         if any(c.repicked for c in contenders):
-            self._start_email(entry_id, contenders)
+            self._start_lecturer_code(entry_id, contenders)
         else:
             for c in contenders:
                 c.state = REPICK
 
-    def _open_challenge(self, entry_id: str) -> EmailChallenge | None:
+    def _open_challenge(self, entry_id: str) -> LecturerChallenge | None:
         for challenge in self.challenges.values():
             if challenge.entry_id == entry_id and not challenge.closed:
                 return challenge
         return None
 
-    def _start_email(self, entry_id: str, contenders: list[Claim]) -> None:
+    def _new_code(self, challenge: LecturerChallenge) -> None:
+        code = f"{secrets.randbelow(10 ** 6):06d}"
+        challenge.salt = os.urandom(16)
+        challenge.code_mac = _code_mac(self.master, challenge.salt, code)
+        challenge.code = code
+        challenge.expires_at = self.now() + CODE_SECONDS
+        challenge.attempts = {}
+
+    def _start_lecturer_code(self, entry_id: str, contenders: list[Claim]) -> None:
         challenge = self._open_challenge(entry_id)
         if challenge is None:
-            code = f"{secrets.randbelow(10 ** 6):06d}"
-            salt = os.urandom(16)
-            challenge = EmailChallenge(
-                id="e_" + secrets.token_hex(6),
-                entry_id=entry_id,
-                salt=salt,
-                code_mac=_code_mac(self.master, salt, code),
-                expires_at=self.now() + CODE_SECONDS,
+            challenge = LecturerChallenge(
+                id="k_" + secrets.token_hex(6), entry_id=entry_id, salt=b"", code_mac=b"", expires_at=0.0
             )
-            entry = self.roster.entries.get(entry_id)
-            result = None
-            if self.mailer is not None and entry is not None:
-                result = self.mailer.send_code(self.roster.email_for(entry_id), entry.display, self.course, code)
-            if result is not None and result.sent:
-                challenge.sent = True
-            else:
-                challenge.demo_code = code
-                challenge.error = result.error if result is not None else ""
-            del code
+            self._new_code(challenge)
             self.challenges[challenge.id] = challenge
         for c in contenders:
-            c.state = EMAIL
+            c.state = LECTURER_CODE
             if c.id not in challenge.claim_ids:
                 challenge.claim_ids.append(c.id)
 
-    def _escalate(self, challenge: EmailChallenge, why: str) -> None:
+    def _renew(self, challenge: LecturerChallenge) -> None:
+        """Expired, or too many wrong tries: a fresh code is shown on the dashboard."""
+        self._new_code(challenge)
+
+    @staticmethod
+    def _close(challenge: LecturerChallenge) -> None:
         challenge.closed = True
-        challenge.demo_code = ""
-        for cid in challenge.claim_ids:
-            claim = self.claims.get(cid)
-            if claim is not None and claim.state == EMAIL:
-                claim.state = REJECTED
-                claim.note = why
+        challenge.code = ""
 
     # ----- views -----------------------------------------------------------
     def counts(self) -> dict:
@@ -333,18 +320,12 @@ class CheckinBook:
         return counts
 
     def challenge_view(self, entry_id: str) -> dict | None:
-        challenge = None
-        for item in self.challenges.values():
-            if item.entry_id == entry_id:
-                challenge = item
+        """Lecturer-only view of the open code for a disputed name."""
+        challenge = self._open_challenge(entry_id)
         if challenge is None:
             return None
-        view = {
-            "open": not challenge.closed,
-            "sent": challenge.sent,
+        return {
+            "code": challenge.code,
             "expires_in": max(0, round(challenge.expires_at - self.now())),
+            "devices": len(challenge.claim_ids),
         }
-        if not challenge.closed and not challenge.sent:
-            view["demo_label"] = "מצב הדגמה – המייל לא נשלח"
-            view["demo_code"] = challenge.demo_code
-        return view

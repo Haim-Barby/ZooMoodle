@@ -2,7 +2,7 @@
 
 A script and checklist for the classroom demo. The five assignment features are marked **F1–F5**.
 
-**Before class:** open the Render HTTPS URL on the laptop (wake the free service a few minutes early), have the lecturer key, the roster CSV, a homework file, a Zoom transcript (`.vtt`), an LLM key, Gmail SMTP set on Render (or demo mode), a roster where the duplicate name has **your** Gmail address, and two phones — **A** on the campus Wi-Fi, **B** on cellular. Prepare two short homework answers to paste.
+**Before class:** open the Render HTTPS URL on the laptop (wake the free service a few minutes early), have the lecturer key, the roster CSV, a homework file, a Zoom transcript (`.vtt`), an LLM key, and two phones — **A** on the campus Wi-Fi, **B** on cellular. Prepare two short homework answers to paste.
 
 | Minute | Who | Do | Pass looks like |
 | --- | --- | --- | --- |
@@ -12,7 +12,7 @@ A script and checklist for the classroom demo. The five assignment features are 
 | 2:00 | Phone B (cellular) | **F1** Same → בכיתה. | Refused: not on the university network (factor 1). |
 | 2:30 | Phone B | **F1** Switch to Wi-Fi; point at a screenshot of the barcode. | Rejected as a still image (factor 2). |
 | 3:00 | Phone B | Choose מרחוק. | ✓ remote; dashboard: 1 remote. |
-| 3:30 | Phone B on Wi-Fi | **F1** Check in class with Phone A's name. | Both phones get the re-pick popup. Both pick the same name again → "אימות במייל" on both; the code arrives in Gmail (or shows on the dashboard in demo mode). Phone A types it → keeps the name; Phone B → "לא אושר" automatically, with "התחל מחדש". |
+| 3:30 | Phone B on Wi-Fi | **F1** Check in class with Phone A's name. | Both phones get the re-pick popup. Both pick the same name again → "המרצה יגיע אליך" on both; the dashboard shows a one-time code. The lecturer types it on Phone A → it keeps the name; Phone B → "לא אושר" with "התחל מחדש" and can check in with another name. |
 | 5:00 | Lecturer / Phone A | **F3** Open a poll; A answers. **F2** A sends a note and a question; B up-votes it. | Live counts; the note; the question with its vote. |
 | 6:15 | Phones A, B | **F5** Each pastes a homework answer → הגש. | The lecturer sees two submissions. |
 | 6:45 | Lecturer | **F5** "ביקורת AI" on A's submission. | Strengths, issues, anonymous comparison to B; "זו ביקורת ולא ציון". |
@@ -24,7 +24,7 @@ A script and checklist for the classroom demo. The five assignment features are 
 
 - [ ] Greeting shown after the key.
 - [ ] In class needed both the campus Wi-Fi and the live scan; off-campus and screenshot attempts failed.
-- [ ] Duplicate name went popup → one-time code in Gmail → decided automatically.
+- [ ] Duplicate name went popup → lecturer code typed on the real phone → other phone removed.
 - [ ] Poll, note, question from the phone.
 - [ ] Homework review with comparison; lesson summary.
 - [ ] Export has no e-mail or ID; no key in any screenshot or commit.

@@ -1,8 +1,9 @@
 """Manual browser run of the duplicate-name flow (not part of the pytest suite).
 
 Two phones check in class with the same name -> both re-pick the same name ->
-one-time e-mail code (demo mode: shown on the lecturer dashboard) -> the phone
-that types it gets the name, the other is rejected and can start over.
+one-time code on the lecturer dashboard -> the lecturer types it on the real
+student's phone, which gets the name; the other phone is removed from the name
+and can start over with another name.
 The camera is replaced by feeding the student page the codes really shown on
 the lecturer screen for >2 s. Start the server as in browser_run.py, then:
     ZM_KEY=<key> python tests/manual/browser_duplicates.py tests/fixtures/roster_sample.csv /tmp/zm-dup"""

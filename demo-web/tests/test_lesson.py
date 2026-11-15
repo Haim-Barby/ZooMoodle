@@ -164,7 +164,7 @@ def test_manual_summary_without_any_key():
     assert signed(client, inside, "GET", f"/api/rooms/{room_id}/summary").json()["text"] == "סיכום ידני"
 
 
-def test_emails_and_id_numbers_never_leave_the_server():
+def test_emails_and_id_numbers_are_not_stored_or_returned():
     app, client = make_client()
     room_id, headers, inside, remote = _students(app, client)
     check_in_class(app, client, room_id, "עמית שמש")
@@ -184,5 +184,5 @@ def test_emails_and_id_numbers_never_leave_the_server():
     assert b"example.test" not in xlsx
     room = app.state.store.get(room_id)
     for entry in room.roster.entries.values():
-        assert "example.test" not in repr(entry)
+        assert "example.test" not in repr(vars(entry))
         assert "123456789" not in repr(vars(entry))

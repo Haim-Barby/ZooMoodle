@@ -64,7 +64,7 @@ The network is checked twice — when the student picks בכיתה and when the 
 1. A verified in-class claim sets every remote claim of that name to `flagged_remote`.
 2. Two verified in-class claims → both `repick`. A different free name resolves it.
 3. A claim that already re-picked collides again → `lecturer_code`: one code appears on the lecturer dashboard. The claim on whose phone it is typed becomes the owner; the others → `rejected` (they can start over with another name).
-4. Expiry or exhausted tries → every claim on the name → `rejected`; the students start over.
+4. After 2 min or 6 wrong tries → a new code on the dashboard; the phones keep waiting. 3 wrong tries on one phone → that phone gets 429 until the lecturer decides.
 5. The lecturer may still `decide(accept|reject)` any claim.
 
 ### Homework review with comparison (feature 5)

@@ -54,21 +54,21 @@ The lecturer can still accept or reject any claim by hand.
 
 **Privacy.** The roster's ID and e-mail columns are not stored; only names (and an optional group) are kept. The one-time code is shown only on the lecturer dashboard, never in a student response, and is stored only as an HMAC. The lecturer key is never printed or committed, and each phone signs its requests with its own session key. LLM API keys are used for one request and dropped; the model only sees pseudonyms (`P-1a2b3c4d`).
 
-## 4. Run it
+## 4. Live demo
 
-```bash
-cd demo-web
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env          # optional settings, never committed
-python -m app.main            # http://127.0.0.1:8000/
-```
+The app is deployed on Render:
 
-- The lecturer key is created at `~/.zoomoodle/lecturer-key.txt` (mode 600) on first start; only the path is printed.
-- Phones need **HTTPS** for the camera: deploy on Render (`demo-web/render.yaml`) or run `cloudflared tunnel --url http://127.0.0.1:8000`, and open the lecturer page through that URL.
-- To try the in-class path at home, add your own address to `ZOOMODLE_CAMPUS_RANGES` in `.env` (local browser: `127.0.0.1/32`).
-- Tests: `python -m pytest -q` from `demo-web/` (74 tests).
-- State is in memory: export the sheet before stopping the server. Proxy/IP details: [components](docs/06-components.md#client-ip-behind-a-proxy).
+- **Lecturer dashboard:** https://zoomoodle.onrender.com
+- **Student page:** https://zoomoodle.onrender.com/student. Students open it through the join QR or the room link that the lecturer dashboard shows for each lesson.
+
+Notes:
+
+- The lecturer key is given separately. It is not in this repository.
+- The service is on Render's free plan. After a quiet period, the first visit may take about a minute while it wakes up.
+- Lesson state is kept in memory. A restart or redeploy clears rooms, so upload the class list again and export the sheet before the end of the lesson.
+- In-class check-in works only from the university network. Remote join works from anywhere.
+
+**Run locally (developers):** `cd demo-web && pip install -r requirements.txt && python -m app.main`, then open http://127.0.0.1:8000/. Tests: `python -m pytest -q` (74 tests). Settings: `demo-web/.env.example`; proxy and IP details: [components](docs/06-components.md#client-ip-behind-a-proxy).
 
 ## 5. Assignment deliverables
 
@@ -82,7 +82,7 @@ python -m app.main            # http://127.0.0.1:8000/
 | 6 | Software components | [docs/06-components.md](docs/06-components.md) |
 | 7 | Class, state and sequence diagrams, OOD | [docs/07-design.md](docs/07-design.md) |
 | 8 | Testing strategy (mapped to classes) | [docs/08-testing-strategy.md](docs/08-testing-strategy.md) |
-| 9 | Demo web app | [`demo-web/`](demo-web/) |
+| 9 | Demo web app | [`demo-web/`](demo-web/), live at https://zoomoodle.onrender.com |
 | 10 | 10-minute demo script | [docs/10-demo-script.md](docs/10-demo-script.md) |
 | 11 | Conclusions | [docs/11-conclusions.md](docs/11-conclusions.md) |
 

@@ -30,9 +30,9 @@ Design, and demo in class in 10 minutes, a simple phone-based teaching tool whos
 | 3 | SoW (this document) | 3 Nov | Done |
 | 4 | SRS + threat model | 3 Nov | Done |
 | 5 | Use cases / client stories | 3 Nov | Done |
-| 6 | Components | 3 Nov | Done |
-| 7 | Class, state and sequence diagrams | 3 Nov | Done |
-| 8 | Testing strategy | 3 Nov | Done |
+| 6 | Components and deployment | 3–16 Nov | Done |
+| 7 | Class, state, sequence and activity diagrams; API reference | 3–16 Nov | Done |
+| 8 | Testing strategy (STP) and test cases (STD) | 3–16 Nov | Done |
 | 9 | Demo web app (campus network + live barcode, features 1–5) | 3–15 Nov | Done |
 | — | Real phones on campus Wi-Fi, the lecturer-code step, live LLM, fill the tools report | 16–23 Nov | Owner |
 | — | Submission | 25 Nov | |
@@ -46,7 +46,17 @@ Design, and demo in class in 10 minutes, a simple phone-based teaching tool whos
 - Campus Wi-Fi leaves the university through `192.114.48.0/21` / `192.114.56.0/23`, and the server sees that address.
 - The lecturer keeps the key private. LLM keys are brought per request by whoever uses the AI features.
 
-## 5. Risks
+## 5. Roles and cost
+
+| Role | Who |
+| --- | --- |
+| Client and acceptance | The course lecturer |
+| Developer, designer, tester (individual project) | Haim Barby, with AI coding agents (see the [tools report](02-tools-report.md#3-vibe-coded-vs-composed)) |
+| Demo participants | Classmates with their own phones |
+
+**Cost:** 0 ₪. Render free plan, open-source libraries, no paid services. LLM calls use a key the user brings and are optional.
+
+## 6. Risks
 
 | Risk | Likelihood | Response |
 | --- | --- | --- |
@@ -58,7 +68,7 @@ Design, and demo in class in 10 minutes, a simple phone-based teaching tool whos
 | No LLM key available in the demo | Medium | Manual summary path; features 4–5 shown with a prepared key. |
 | Server restarts (Render free plan sleeps) | Medium | Open the site before class; export the sheet before finishing. |
 
-## 6. Acceptance
+## 7. Acceptance
 
 - Wrong lecturer key → refused; right key → the greeting.
 - In class needs both the campus network and a 2 s live scan with codes at most 3 s old; a screenshot or an off-campus IP is refused. Remote join needs neither.

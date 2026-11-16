@@ -1,0 +1,29 @@
+@startuml deployment
+!pragma layout smetana
+title ZooMoodle – deployment
+
+node "Student phone" as PHONE {
+  artifact "Student page\n(student.html/js, jsQR)" as SP
+}
+node "Lecturer laptop + projector" as LAPTOP {
+  artifact "Lecturer page\n(lecturer.html/js)" as LP
+}
+cloud "Campus Wi-Fi\n192.114.48.0/21, 192.114.56.0/23" as WIFI
+cloud "Cloudflare\n(sets CF-Connecting-IP)" as CF
+node "Render web service (free plan)" as RENDER {
+  node "Render proxy\n(private range)" as PX
+  node "Python 3.12 · Uvicorn, 1 worker" as PROC {
+    artifact "FastAPI app\n(demo-web/app)" as APP
+    database "In-memory rooms" as MEM
+  }
+}
+cloud "LLM provider (optional)" as LLM
+
+SP --> WIFI : HTTPS
+WIFI --> CF
+LP --> CF : HTTPS
+CF --> PX
+PX --> APP : HTTP + forwarded headers
+APP --> MEM
+APP --> LLM : HTTPS, key per request
+@enduml

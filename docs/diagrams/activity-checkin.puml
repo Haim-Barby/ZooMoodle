@@ -1,0 +1,35 @@
+@startuml activity-checkin
+title In-class check-in – activity (UC-4)
+
+start
+:Scan the join QR;
+:Pick a name;
+if (Mode?) then (מרחוק)
+  :State remote;
+  stop
+else (בכיתה)
+endif
+if (Client IP in campus ranges?) then (no)
+  :not_on_campus_network;
+  stop
+else (yes)
+endif
+repeat
+  :Hold the camera on the live barcode 2 s;
+  :Send the codes;
+repeat while (>=5 fresh, ordered, unused codes of this room over 2 s?) is (no: qr_static / qr_short / stale)
+->yes;
+if (IP still in campus ranges?) then (no)
+  :not_on_campus_network;
+  stop
+else (yes)
+endif
+if (Name already verified by another phone?) then (yes)
+  :Duplicate-name stages (UC-5);
+  stop
+else (no)
+endif
+:Pick an area on the 3×3 map;
+:State present, "welcome ‹name›";
+stop
+@enduml

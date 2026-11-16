@@ -1,12 +1,32 @@
 # Software requirements specification
 
-## 1. Purpose
+## 1. Introduction
 
-Attendance a student cannot fake from home, with a spreadsheet for the lecturer (feature 1, the main one), and live feedback and LLM help for one lesson (features 2–5).
+**Purpose.** Attendance a student cannot fake from home, with a spreadsheet for the lecturer (feature 1, the main one), and live feedback and LLM help for one lesson (features 2–5).
+
+**Scope.** One lesson at a time, in one classroom; out of scope as in the [SoW](03-SoW.md#2-scope).
+
+**References**
+
+- Ex2 assignment, *Vibe Coding & Deep Designing: Web-based Teaching Tool*, Intro2SE, Ariel University.
+- Lecture 02a, *Software Engineering Documents*, B. Ben-Moshe, Ariel University.
+- RIPE database, Ariel University inetnum `192.114.48.0 – 192.114.57.255`.
+- Project documents: [SoW](03-SoW.md), [use cases](05-use-cases.md), [components](06-components.md), [design](07-design.md), [API](09-api.md), [testing](08-testing-strategy.md).
 
 ## 2. Overview
 
 One FastAPI process serves the lecturer page (`/`) and the student page (`/student`) and keeps everything in memory. Phones use HTTPS. An LLM provider is optional and is called only with a key given in the request.
+
+**User classes**
+
+| User | Device | Needs |
+| --- | --- | --- |
+| Lecturer | Laptop + projector, desktop browser | Sign in with the key, run the lesson, read the dashboard, export the sheet. |
+| Student in class | Own phone on the campus Wi-Fi | Check in within seconds, take part in polls, notes and questions, submit homework. |
+| Student at home | Phone or laptop, any network | Join remotely and take part in the same way. |
+| LLM provider | External system | Answers agent requests for features 4–5. |
+
+**Operating environment and constraints.** iOS Safari and Android Chrome on the phone; any modern browser on the laptop. Server: Python 3.12, FastAPI, one Uvicorn worker on Render's free plan (see the deployment diagram in [components](06-components.md#deployment)). No database, no Moodle/Zoom integration and no university personal-data systems (assignment guideline 1).
 
 ## 3. Glossary
 
@@ -34,9 +54,16 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | FR-4 | 1 | The lecturer screen shows the live barcode: an HMAC-signed, room-bound QR per 250 ms slot and a 20 Hz shimmer border. | M |
 | FR-5 | 1 | A student picks a name from the roster and chooses in class or remote. No ID or e-mail is asked. Each join gets its own signed session. | M |
 | FR-6 | 1 | Remote: state `remote` (✓ remote). No network or barcode check. | M |
-| FR-7 | 1 | In class requires (a) the client IP inside the campus ranges, checked at join and again at scan, and (b) a barcode capture of ≥5 distinct codes spanning ≥2 s, each ≤3 s old by the server clock, in order, not reused for that name, from this room. Then the student picks one of 9 areas and becomes `present` with "ברוך הבא ‹name›". | M |
+| FR-7a | 1 | In class requires the client IP inside the campus ranges, checked at join and again when the barcode capture arrives. | M |
+| FR-7b | 1 | In class requires a barcode capture of ≥5 distinct codes spanning ≥2 s, each ≤3 s old by the server clock, in order, not reused for that name, from this room. | M |
+| FR-7c | 1 | After FR-7a and FR-7b pass, the student picks one of 9 areas and becomes `present` with "ברוך הבא ‹name›". | M |
 | FR-8 | 1 | Client IP: forwarded headers are honoured only from trusted proxies (loopback, and Render's private proxy ranges). From a trusted proxy the server uses `CF-Connecting-IP` / `True-Client-IP` (set by Cloudflare); otherwise the right-most `X-Forwarded-For` hop that is neither a trusted proxy nor a Cloudflare address; never a body field. | M |
-| FR-9 | 1 | Duplicate names are resolved in stages: (1) a verified in-class claim flags remote claims of the same name; (2) two verified in-class claims → both must re-pick; (3) the same name again → the lecturer dashboard shows a 6-digit one-time code; the lecturer types it on the real student's phone, which gets the name; (4) the other claims on the name are rejected and those phones may check in again with another name. A wrong code is refused (3 tries per phone; 6 wrong tries in total → a new code); the code renews every 2 min and works once. A phone that later re-picks a name given this way is rejected. The lecturer can accept or reject any claim by hand. | S |
+| FR-9a | 1 | A verified in-class claim flags every remote claim of the same name for the lecturer. | S |
+| FR-9b | 1 | Two verified in-class claims on one name → both phones must re-pick their name. | S |
+| FR-9c | 1 | The same name again after a re-pick → the lecturer dashboard shows a 6-digit one-time code for that name, stored only as an HMAC, renewed every 2 min, single use. | S |
+| FR-9d | 1 | The phone on which the lecturer types the code gets the name; the other claims on the name are rejected and those phones may check in again with another name. A phone that later re-picks that name is rejected. | S |
+| FR-9e | 1 | A wrong code is refused: 3 tries per phone (then 429), and 6 wrong tries in total → a new code. | S |
+| FR-9f | 1 | The lecturer can accept or reject any claim by hand; accepting also closes an open code. | S |
 | FR-10 | 1 | **Online sheet:** the dashboard shows counts (in class, remote, in progress, conflicts), the list with ✓, a 3×3 map, conflicts. **Offline sheet:** CSV/XLSX export of name, mode, state, area, time. | M |
 | FR-11 | 3 | Polls: 2–6 options, optional correct answer, one answer per student, close poll. Students see counts only after voting or closing. | M |
 | FR-12 | 2 | Students in `present` or `remote` post notes and questions and up-vote questions. The dashboard lists notes and sorts questions by votes. | M |
@@ -44,7 +71,18 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | FR-14 | 4 | Summary: the lecturer uploads the lesson transcript (VTT/TXT from Zoom/Meet) and either writes a summary or gives provider/model/API key to have the agent write it from the transcript, polls and questions; then all students of the room see it. | S |
 | FR-15 | 5 | Homework review: a checked-in student submits a text answer (paste or text/code file, ≤100,000 characters; a new one replaces the old). The student (own submission only) or the lecturer (any) asks for a review with provider/model/key. The agent reads the submission, compares it with the other submissions through a Jaccard-similarity tool, and returns strengths, issues and an anonymous comparison, marked "not a grade". Needs at least 2 submissions in the room. | S |
 
-## 5. Non-functional requirements
+## 5. External interfaces
+
+| Interface | Details |
+| --- | --- |
+| User interface | Two Hebrew RTL web pages: lecturer `/`, student `/student`, one step per screen. |
+| REST API | JSON over HTTPS under `/api`; see the [API reference](09-api.md). |
+| Phone camera | `getUserMedia` + jsQR in the browser; needs HTTPS. |
+| Proxy headers | `CF-Connecting-IP`, `True-Client-IP`, `X-Forwarded-For`, honoured only from trusted proxies (FR-8). |
+| LLM providers | HTTPS REST: OpenAI-compatible, Anthropic, Gemini; key in the request only. |
+| Files | In: roster CSV, transcript VTT/TXT, homework file. Out: attendance CSV/XLSX. |
+
+## 6. Non-functional requirements
 
 | ID | Concern | Requirement | Verified by |
 | --- | --- | --- | --- |
@@ -59,7 +97,7 @@ Priority: **M** = must (the demo fails without it), **S** = should, **C** = coul
 | NFR-A1 | Availability | In memory; a restart loses lessons (export first). A model failure returns an error, never invented text. | `test_agent.py` |
 | NFR-M1 | Maintainability | Automated tests ≥ 60, line coverage ≥ 80% (now 74 tests, 85%). | `pytest --cov` |
 
-## 6. Threat model
+## 7. Threat model
 
 | Threat | Mitigation | Residual |
 | --- | --- | --- |

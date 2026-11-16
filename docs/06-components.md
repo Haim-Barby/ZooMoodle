@@ -37,6 +37,12 @@ Source: `docs/diagrams/components.puml`.
 - **LLM provider** (optional) — called only when someone supplies a key.
 - **Render / cloudflared** — HTTPS in front of the app; the proxy appends the client IP.
 
+## Deployment
+
+![Deployment](diagrams/deployment.svg)
+
+Source: `docs/diagrams/deployment.puml`. One free Render web service (`demo-web/render.yaml`): Python 3.12, one Uvicorn worker, health check `/api/health`, state in memory. Phones and the laptop reach it over HTTPS through Cloudflare and Render's proxy; the app calls an LLM provider only when a key is supplied.
+
 ## Client IP behind a proxy
 
 The campus check (factor 1) depends on reading the phone's real public IP, which arrives through a proxy:

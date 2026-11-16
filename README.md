@@ -78,12 +78,17 @@ Notes:
 | 2 | Tools report (incl. vibe-coded vs. composed) | [docs/02-tools-report.md](docs/02-tools-report.md) |
 | 3 | Statement of work | [docs/03-SoW.md](docs/03-SoW.md) |
 | 4 | SRS and threat model | [docs/04-SRS.md](docs/04-SRS.md) |
-| 5 | Use cases (client stories) | [docs/05-use-cases.md](docs/05-use-cases.md) |
-| 6 | Software components | [docs/06-components.md](docs/06-components.md) |
+| 5 | Use cases (client stories), check-in activity diagram | [docs/05-use-cases.md](docs/05-use-cases.md) |
+| 6 | Software components and deployment | [docs/06-components.md](docs/06-components.md) |
 | 7 | Class, state and sequence diagrams, OOD | [docs/07-design.md](docs/07-design.md) |
-| 8 | Testing strategy (mapped to classes) | [docs/08-testing-strategy.md](docs/08-testing-strategy.md) |
+| — | API reference | [docs/09-api.md](docs/09-api.md), live at https://zoomoodle.onrender.com/docs |
+| 8 | Testing strategy (mapped to classes) and test cases | [docs/08-testing-strategy.md](docs/08-testing-strategy.md) |
 | 9 | Demo web app | [`demo-web/`](demo-web/), live at https://zoomoodle.onrender.com |
 | 10 | 10-minute demo script | [docs/10-demo-script.md](docs/10-demo-script.md) |
 | 11 | Conclusions | [docs/11-conclusions.md](docs/11-conclusions.md) |
 
 **Still to verify in class:** a real phone camera on the projected barcode, the campus Wi-Fi as seen from Render, the lecturer-code step with two real phones, and a live LLM call. Results go in the [tools report](docs/02-tools-report.md#5-real-life-checks).
+
+## 6. Contributing
+
+Open an issue or a pull request; run `python -m pytest -q` in `demo-web/` and update the matching document in the same PR.
